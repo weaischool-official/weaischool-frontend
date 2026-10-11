@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams, usePathname } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { tenantApi } from "@/lib/api";
+import { useAuthStore } from "@/store/authStore";
 import {
   LayoutDashboard,
   GraduationCap,
@@ -22,6 +23,7 @@ import {
   ChevronRight,
   LogOut,
   Landmark,
+  Loader2,
 } from "lucide-react";
 
 const navItems = [
@@ -53,15 +55,44 @@ export default function SchoolPanelLayout({
 }) {
   const params = useParams();
   const pathname = usePathname();
-  const slug = params.slug as string;
+  const router = useRouter();
+  const slug = (params?.slug as string) || "ppps";
+
+  // ── Auth (hydration-safe — NO auto logout on refresh) ──
+  const { isAuthenticated, _hasHydrated, checkAuth, logout } = useAuthStore();
+  const [authReady, setAuthReady] = useState(false);
+
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [tenantLoaded, setTenantLoaded] = useState(false);
   const [tenantError, setTenantError] = useState("");
 
   const basePath = `/school/${slug}`;
 
+  // ═══════════════════════════════════════════════════════════
+  // AUTH GUARD — wait for hydration, then check token
+  // Only redirect if there is truly NO token in localStorage
+  // ═══════════════════════════════════════════════════════════
   useEffect(() => {
-    if (!slug) return;
+    if (!_hasHydrated) return;
+
+    const hasToken = checkAuth();
+
+    if (!isAuthenticated && !hasToken) {
+      console.warn(
+        `[SchoolPanel] No valid session for school "${slug}" — redirecting to login`
+      );
+      router.replace(`/school/${slug}/login`);
+      return;
+    }
+
+    setAuthReady(true);
+  }, [_hasHydrated, isAuthenticated, checkAuth, router, slug]);
+
+  // ═══════════════════════════════════════════════════════════
+  // TENANT ID bootstrap (for X-Tenant-ID header)
+  // ═══════════════════════════════════════════════════════════
+  useEffect(() => {
+    if (!slug || !authReady) return;
 
     const cachedId = localStorage.getItem(`tenant_id_${slug}`);
     if (cachedId) {
@@ -72,10 +103,16 @@ export default function SchoolPanelLayout({
     tenantApi
       .list(1, 100, slug)
       .then((res) => {
-        const tenants = res.data?.items || [];
-        const found = tenants.find((t: { slug: string }) => t.slug === slug);
+        const tenants = res.data?.items || res.data?.data || res.data || [];
+        const list = Array.isArray(tenants) ? tenants : [];
+        const found = list.find(
+          (t: { slug?: string }) => t.slug === slug
+        ) as { id?: string } | undefined;
+
         if (found?.id) {
           localStorage.setItem(`tenant_id_${slug}`, found.id);
+          localStorage.setItem("tenant_id", found.id);
+          localStorage.setItem("tenantId", found.id);
           setTenantLoaded(true);
         } else {
           setTenantError("School not found!");
@@ -84,16 +121,37 @@ export default function SchoolPanelLayout({
       })
       .catch((err) => {
         console.error("Failed to fetch tenant:", err);
-        setTenantError("Failed to load school data");
+        // Don't block panel if tenant list fails but token exists
+        setTenantError("");
         setTenantLoaded(true);
       });
-  }, [slug]);
+  }, [slug, authReady]);
 
-  const groupedItems = navItems.reduce((acc, item) => {
-    if (!acc[item.section]) acc[item.section] = [];
-    acc[item.section].push(item);
-    return acc;
-  }, {} as Record<string, typeof navItems>);
+  const handleLogout = () => {
+    logout();
+    router.replace(`/school/${slug}/login`);
+  };
+
+  const groupedItems = navItems.reduce(
+    (acc, item) => {
+      if (!acc[item.section]) acc[item.section] = [];
+      acc[item.section].push(item);
+      return acc;
+    },
+    {} as Record<string, typeof navItems>
+  );
+
+  // ── Full-screen loader until auth + hydration ready ──
+  if (!_hasHydrated || !authReady) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-gray-400">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+          <p className="text-sm">Verifying session...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-950 flex">
@@ -137,7 +195,8 @@ export default function SchoolPanelLayout({
                 {items.map((item) => {
                   const fullPath = `${basePath}/${item.href}`;
                   const isActive =
-                    pathname === fullPath || pathname?.startsWith(fullPath + "/");
+                    pathname === fullPath ||
+                    pathname?.startsWith(fullPath + "/");
                   const Icon = item.icon;
                   const isUdise = item.href === "udise";
 
@@ -180,7 +239,7 @@ export default function SchoolPanelLayout({
           ))}
         </nav>
 
-        <div className="p-3 border-t border-gray-800 flex-shrink-0">
+        <div className="p-3 border-t border-gray-800 flex-shrink-0 space-y-1">
           <Link
             href="/schools"
             className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-gray-400 hover:text-white hover:bg-gray-800 transition-all"
@@ -188,6 +247,14 @@ export default function SchoolPanelLayout({
             <LogOut className="w-5 h-5" />
             <span>Back to Super Admin</span>
           </Link>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-all"
+          >
+            <LogOut className="w-5 h-5" />
+            <span>Logout</span>
+          </button>
         </div>
       </aside>
 
@@ -221,8 +288,11 @@ export default function SchoolPanelLayout({
             children
           ) : (
             <div className="flex items-center justify-center py-20">
-              <div className="text-gray-400 animate-pulse">
-                Loading school data...
+              <div className="flex flex-col items-center gap-3 text-gray-400">
+                <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+                <span className="animate-pulse text-sm">
+                  Loading school data...
+                </span>
               </div>
             </div>
           )}
