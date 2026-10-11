@@ -58,8 +58,7 @@ export default function SchoolPanelLayout({
   const router = useRouter();
   const slug = (params?.slug as string) || "ppps";
 
-  // ── Auth (hydration-safe — NO auto logout on refresh) ──
-  const { isAuthenticated, _hasHydrated, checkAuth, logout } = useAuthStore();
+  const { isAuthenticated, _hasHydrated, checkAuth } = useAuthStore();
   const [authReady, setAuthReady] = useState(false);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -68,19 +67,13 @@ export default function SchoolPanelLayout({
 
   const basePath = `/school/${slug}`;
 
-  // ═══════════════════════════════════════════════════════════
-  // AUTH GUARD — wait for hydration, then check token
-  // Only redirect if there is truly NO token in localStorage
-  // ═══════════════════════════════════════════════════════════
   useEffect(() => {
     if (!_hasHydrated) return;
 
     const hasToken = checkAuth();
 
     if (!isAuthenticated && !hasToken) {
-      console.warn(
-        `[SchoolPanel] No valid session for school "${slug}" — redirecting to login`
-      );
+      console.warn(`[SchoolPanel] No session found for school "${slug}" -> redirecting`);
       router.replace(`/school/${slug}/login`);
       return;
     }
@@ -88,9 +81,6 @@ export default function SchoolPanelLayout({
     setAuthReady(true);
   }, [_hasHydrated, isAuthenticated, checkAuth, router, slug]);
 
-  // ═══════════════════════════════════════════════════════════
-  // TENANT ID bootstrap (for X-Tenant-ID header)
-  // ═══════════════════════════════════════════════════════════
   useEffect(() => {
     if (!slug || !authReady) return;
 
@@ -105,9 +95,7 @@ export default function SchoolPanelLayout({
       .then((res) => {
         const tenants = res.data?.items || res.data?.data || res.data || [];
         const list = Array.isArray(tenants) ? tenants : [];
-        const found = list.find(
-          (t: { slug?: string }) => t.slug === slug
-        ) as { id?: string } | undefined;
+        const found = list.find((t: { slug?: string }) => t.slug === slug) as { id?: string } | undefined;
 
         if (found?.id) {
           localStorage.setItem(`tenant_id_${slug}`, found.id);
@@ -119,33 +107,22 @@ export default function SchoolPanelLayout({
           setTenantLoaded(true);
         }
       })
-      .catch((err) => {
-        console.error("Failed to fetch tenant:", err);
-        // Don't block panel if tenant list fails but token exists
+      .catch(() => {
         setTenantError("");
         setTenantLoaded(true);
       });
   }, [slug, authReady]);
 
-  const handleLogout = () => {
-    logout();
-    router.replace(`/school/${slug}/login`);
-  };
+  const groupedItems = navItems.reduce((acc, item) => {
+    if (!acc[item.section]) acc[item.section] = [];
+    acc[item.section].push(item);
+    return acc;
+  }, {} as Record<string, typeof navItems>);
 
-  const groupedItems = navItems.reduce(
-    (acc, item) => {
-      if (!acc[item.section]) acc[item.section] = [];
-      acc[item.section].push(item);
-      return acc;
-    },
-    {} as Record<string, typeof navItems>
-  );
-
-  // ── Full-screen loader until auth + hydration ready ──
   if (!_hasHydrated || !authReady) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-gray-400">
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-slate-400">
           <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
           <p className="text-sm">Verifying session...</p>
         </div>
@@ -154,7 +131,7 @@ export default function SchoolPanelLayout({
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 flex">
+    <div className="min-h-screen bg-slate-950 flex">
       {sidebarOpen && (
         <div
           className="fixed inset-0 bg-black/60 z-40 md:hidden"
@@ -163,11 +140,11 @@ export default function SchoolPanelLayout({
       )}
 
       <aside
-        className={`fixed md:sticky top-0 left-0 h-screen z-50 w-64 bg-gray-900 border-r border-gray-800 transform transition-transform duration-200 flex flex-col ${
+        className={`fixed md:sticky top-0 left-0 h-screen z-50 w-64 bg-slate-900 border-r border-slate-800 transform transition-transform duration-200 flex flex-col ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         }`}
       >
-        <div className="h-16 flex items-center gap-3 px-5 border-b border-gray-800 flex-shrink-0">
+        <div className="h-16 flex items-center gap-3 px-5 border-b border-slate-800 flex-shrink-0">
           <div className="p-2 bg-blue-500/10 rounded-lg">
             <School className="w-5 h-5 text-blue-400" />
           </div>
@@ -175,11 +152,11 @@ export default function SchoolPanelLayout({
             <p className="text-sm font-bold text-white truncate capitalize">
               {slug.replace(/-/g, " ")}
             </p>
-            <p className="text-xs text-gray-500">School Admin</p>
+            <p className="text-xs text-slate-500">School Admin Panel</p>
           </div>
           <button
             onClick={() => setSidebarOpen(false)}
-            className="md:hidden p-1 text-gray-400"
+            className="md:hidden p-1 text-slate-400"
           >
             <X className="w-5 h-5" />
           </button>
@@ -188,15 +165,14 @@ export default function SchoolPanelLayout({
         <nav className="flex-1 p-3 space-y-4 overflow-y-auto">
           {Object.entries(groupedItems).map(([section, items]) => (
             <div key={section}>
-              <p className="text-xs font-bold text-gray-600 uppercase px-3 mb-2 tracking-wider">
+              <p className="text-xs font-bold text-slate-600 uppercase px-3 mb-2 tracking-wider">
                 {sectionLabels[section]}
               </p>
               <div className="space-y-1">
                 {items.map((item) => {
                   const fullPath = `${basePath}/${item.href}`;
                   const isActive =
-                    pathname === fullPath ||
-                    pathname?.startsWith(fullPath + "/");
+                    pathname === fullPath || pathname?.startsWith(fullPath + "/");
                   const Icon = item.icon;
                   const isUdise = item.href === "udise";
 
@@ -212,7 +188,7 @@ export default function SchoolPanelLayout({
                             : "bg-blue-600 text-white shadow-lg shadow-blue-500/20"
                           : isUdise
                           ? "text-purple-300 hover:text-white hover:bg-purple-500/10"
-                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                          : "text-slate-400 hover:text-white hover:bg-slate-800"
                       }`}
                     >
                       <Icon className="w-5 h-5 flex-shrink-0" />
@@ -239,35 +215,28 @@ export default function SchoolPanelLayout({
           ))}
         </nav>
 
-        <div className="p-3 border-t border-gray-800 flex-shrink-0 space-y-1">
+        {/* ONLY "Back to Super Admin" — NO LOGOUT HERE */}
+        <div className="p-3 border-t border-slate-800 flex-shrink-0">
           <Link
-            href="/schools"
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-gray-400 hover:text-white hover:bg-gray-800 transition-all"
+            href="/dashboard"
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-slate-400 hover:text-white hover:bg-slate-800 transition-all font-medium"
           >
-            <LogOut className="w-5 h-5" />
+            <LogOut className="w-5 h-5 text-blue-400" />
             <span>Back to Super Admin</span>
           </Link>
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-all"
-          >
-            <LogOut className="w-5 h-5" />
-            <span>Logout</span>
-          </button>
         </div>
       </aside>
 
       <main className="flex-1 min-w-0 flex flex-col">
-        <header className="h-16 bg-gray-900 border-b border-gray-800 flex items-center px-6 gap-4 sticky top-0 z-30">
+        <header className="h-16 bg-slate-900 border-b border-slate-800 flex items-center px-6 gap-4 sticky top-0 z-30">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="md:hidden p-2 text-gray-400 hover:text-white"
+            className="md:hidden p-2 text-slate-400 hover:text-white"
           >
             <Menu className="w-5 h-5" />
           </button>
           <div className="flex-1">
-            <p className="text-sm text-gray-400">School Admin Panel</p>
+            <p className="text-sm text-slate-400">School Admin Panel</p>
           </div>
         </header>
 
@@ -278,17 +247,17 @@ export default function SchoolPanelLayout({
                 ⚠️ {tenantError}
               </p>
               <Link
-                href="/schools"
-                className="inline-block mt-4 px-6 py-2 bg-blue-600 text-white rounded-xl"
+                href="/dashboard"
+                className="inline-block mt-4 px-6 py-2 bg-blue-600 text-white rounded-xl text-sm font-semibold"
               >
-                Back to Schools
+                Back to Dashboard
               </Link>
             </div>
           ) : tenantLoaded ? (
             children
           ) : (
             <div className="flex items-center justify-center py-20">
-              <div className="flex flex-col items-center gap-3 text-gray-400">
+              <div className="flex flex-col items-center gap-3 text-slate-400">
                 <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
                 <span className="animate-pulse text-sm">
                   Loading school data...
