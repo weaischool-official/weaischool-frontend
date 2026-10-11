@@ -1,6 +1,6 @@
 // ============================================================
-// WEAISCHOOL TEC — Auth State Management (HYDRATION SAFE)
-// Prevents premature redirects & preserves sessions permanently
+// WEAISCHOOL TEC — Web Auth Store (HYDRATION SAFE)
+// Fixes auto-logout on refresh / tab reopen / idle
 // ============================================================
 
 import { create } from "zustand";
@@ -16,11 +16,21 @@ interface AuthState {
   _hasHydrated: boolean;
 
   setUser: (user: UserProfile) => void;
-  setTokens: (access: string, refresh: string) => void;
+  setTokens: (access: string, refresh?: string) => void;
   logout: () => void;
   setLoading: (loading: boolean) => void;
   setHasHydrated: (state: boolean) => void;
   checkAuth: () => boolean;
+}
+
+function readTokenFromStorage(): string | null {
+  if (typeof window === "undefined") return null;
+  const t =
+    localStorage.getItem("access_token") ||
+    localStorage.getItem("token") ||
+    localStorage.getItem("userToken");
+  if (!t || t === "undefined" || t === "null" || t.length < 10) return null;
+  return t;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -33,7 +43,8 @@ export const useAuthStore = create<AuthState>()(
       isLoading: true,
       _hasHydrated: false,
 
-      setHasHydrated: (state) => set({ _hasHydrated: state, isLoading: false }),
+      setHasHydrated: (state) =>
+        set({ _hasHydrated: state, isLoading: false }),
 
       setUser: (user) =>
         set({
@@ -42,15 +53,17 @@ export const useAuthStore = create<AuthState>()(
           isLoading: false,
         }),
 
-      setTokens: (access, refresh) => {
+      setTokens: (access, refresh = "") => {
         if (typeof window !== "undefined") {
           localStorage.setItem("access_token", access);
-          localStorage.setItem("token", access); // dual-key fallback
-          localStorage.setItem("refresh_token", refresh);
+          localStorage.setItem("token", access);
+          if (refresh) {
+            localStorage.setItem("refresh_token", refresh);
+          }
         }
         set({
           accessToken: access,
-          refreshToken: refresh,
+          refreshToken: refresh || get().refreshToken,
           isAuthenticated: true,
           isLoading: false,
         });
@@ -63,6 +76,8 @@ export const useAuthStore = create<AuthState>()(
           localStorage.removeItem("userToken");
           localStorage.removeItem("refresh_token");
           localStorage.removeItem("user");
+          localStorage.removeItem("user_info");
+          localStorage.removeItem("user_profile");
           localStorage.removeItem("weaischool-admin-auth");
         }
         set({
@@ -76,21 +91,25 @@ export const useAuthStore = create<AuthState>()(
 
       setLoading: (loading) => set({ isLoading: loading }),
 
+      // Sync memory state with physical localStorage token
       checkAuth: () => {
-        if (typeof window === "undefined") return false;
-        const token =
-          localStorage.getItem("access_token") ||
-          localStorage.getItem("token") ||
-          localStorage.getItem("userToken");
-
-        const hasValidToken = Boolean(
-          token && token !== "undefined" && token !== "null" && token.length > 10
-        );
-
-        if (hasValidToken && !get().isAuthenticated) {
-          set({ isAuthenticated: true, accessToken: token, isLoading: false });
+        const token = readTokenFromStorage();
+        const ok = Boolean(token);
+        if (ok && !get().isAuthenticated) {
+          set({
+            isAuthenticated: true,
+            accessToken: token,
+            isLoading: false,
+          });
         }
-        return hasValidToken;
+        if (!ok && get().isAuthenticated) {
+          set({
+            isAuthenticated: false,
+            accessToken: null,
+            isLoading: false,
+          });
+        }
+        return ok;
       },
     }),
     {
@@ -103,20 +122,16 @@ export const useAuthStore = create<AuthState>()(
         isAuthenticated: state.isAuthenticated,
       }),
       onRehydrateStorage: () => (state) => {
-        if (state) {
-          state.setHasHydrated(true);
-          // Hard sync with direct localStorage check
-          if (typeof window !== "undefined") {
-            const token =
-              localStorage.getItem("access_token") ||
-              localStorage.getItem("token") ||
-              localStorage.getItem("userToken");
+        if (!state) return;
+        state.setHasHydrated(true);
 
-            if (token && token !== "undefined" && token !== "null" && token.length > 10) {
-              state.isAuthenticated = true;
-              state.accessToken = token;
-              state.isLoading = false;
-            }
+        // Hard sync after rehydrate — prevent false logout
+        if (typeof window !== "undefined") {
+          const token = readTokenFromStorage();
+          if (token) {
+            state.isAuthenticated = true;
+            state.accessToken = token;
+            state.isLoading = false;
           }
         }
       },

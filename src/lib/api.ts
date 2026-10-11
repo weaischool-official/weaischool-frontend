@@ -1,14 +1,14 @@
 // ============================================================
-// WEAISCHOOL TEC — API Client (PRODUCTION READY)
-// This file talks to the backend
-// Every request automatically gets the token attached
+// WEAISCHOOL TEC — Web Frontend API Client (PRODUCTION READY)
+// Persistent Auth (30-Day JWT) + Non-Destructive Interceptors
 // ============================================================
 
-import axios, { AxiosInstance, AxiosError } from "axios";
+import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from "axios";
 
 // ─── BASE URL ───────────────────────────────────────────────
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api/v1";
+  process.env.NEXT_PUBLIC_API_URL ||
+  "https://weaischool-backend.onrender.com/api/v1";
 
 // ─── AXIOS INSTANCE ─────────────────────────────────────────
 const api: AxiosInstance = axios.create({
@@ -19,28 +19,50 @@ const api: AxiosInstance = axios.create({
   timeout: 30000,
 });
 
+// ─── HELPERS ────────────────────────────────────────────────
+function getAccessToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return (
+    localStorage.getItem("access_token") ||
+    localStorage.getItem("token") ||
+    localStorage.getItem("userToken")
+  );
+}
+
 // ═══════════════════════════════════════════════════════════
-// REQUEST INTERCEPTOR — Auto-attach token
+// REQUEST INTERCEPTOR — Auto-attach token + tenant
 // ═══════════════════════════════════════════════════════════
 api.interceptors.request.use(
-  (config) => {
+  (config: InternalAxiosRequestConfig) => {
     if (typeof window !== "undefined") {
-      // Auto-attach token
-      const token = localStorage.getItem("access_token");
-      if (token) {
+      const token = getAccessToken();
+      if (token && token !== "undefined" && token !== "null") {
         config.headers.Authorization = `Bearer ${token}`;
       }
 
       // Auto-attach tenant context (from URL /school/[slug]/...)
       const path = window.location.pathname;
-      const schoolMatch = path.match(/^\/school\/([^\/]+)/);
+      const schoolMatch = path.match(/^\/school\/([^/]+)/);
       if (schoolMatch && schoolMatch[1]) {
         const tenantSlug = schoolMatch[1];
-        const tenantId = localStorage.getItem(`tenant_id_${tenantSlug}`);
-        if (tenantId) {
+        config.headers["X-Tenant-Slug"] = tenantSlug;
+
+        const tenantId =
+          localStorage.getItem(`tenant_id_${tenantSlug}`) ||
+          localStorage.getItem("tenant_id") ||
+          localStorage.getItem("tenantId");
+
+        if (tenantId && tenantId !== "undefined" && tenantId !== "null") {
           config.headers["X-Tenant-ID"] = tenantId;
         }
-        config.headers["X-Tenant-Slug"] = tenantSlug;
+      } else {
+        // Global / Super Admin Context
+        const tenantId =
+          localStorage.getItem("tenant_id") ||
+          localStorage.getItem("tenantId");
+        if (tenantId && tenantId !== "undefined" && tenantId !== "null") {
+          config.headers["X-Tenant-ID"] = tenantId;
+        }
       }
     }
 
@@ -50,46 +72,17 @@ api.interceptors.request.use(
 );
 
 // ═══════════════════════════════════════════════════════════
-// RESPONSE INTERCEPTOR — Auto token refresh on 401
+// RESPONSE INTERCEPTOR — SAFE ERROR HANDLING (NO DESTRUCTIVE LOGOUTS)
 // ═══════════════════════════════════════════════════════════
 api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
-    const originalRequest = error.config as typeof error.config & {
-      _retry?: boolean;
-    };
-
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
-
-      try {
-        const refreshToken = localStorage.getItem("refresh_token");
-
-        if (!refreshToken) {
-          localStorage.clear();
-          if (typeof window !== "undefined") {
-            window.location.href = "/login";
-          }
-          return Promise.reject(error);
-        }
-
-        const response = await axios.post(`${API_BASE_URL}/auth/refresh`, {
-          refresh_token: refreshToken,
-        });
-
-        const { access_token } = response.data;
-        localStorage.setItem("access_token", access_token);
-
-        originalRequest.headers!.Authorization = `Bearer ${access_token}`;
-        return api(originalRequest);
-      } catch {
-        localStorage.clear();
-        if (typeof window !== "undefined") {
-          window.location.href = "/login";
-        }
-      }
+    if (error.response?.status === 401) {
+      console.warn(
+        `[API Client] 401 Warning on ${error.config?.url} — Session preserved in storage.`
+      );
     }
-
+    // NEVER wipe localStorage or call window.location.href here!
     return Promise.reject(error);
   }
 );
@@ -98,10 +91,14 @@ api.interceptors.response.use(
 // AUTHENTICATION APIs
 // ═══════════════════════════════════════════════════════════
 export const authApi = {
-  login: (email: string, password: string) =>
-    api.post("/auth/login", { email, password }),
+  login: (email: string, password: string, tenant_slug?: string) =>
+    api.post("/auth/login", {
+      email,
+      password,
+      ...(tenant_slug ? { tenant_slug } : {}),
+    }),
 
-  logout: () => api.post("/auth/logout"),
+  logout: () => api.post("/auth/logout").catch(() => null),
 
   me: () => api.get("/auth/me"),
 
@@ -220,11 +217,14 @@ export const classApi = {
 export const sectionApi = {
   listByClass: (classId: string) =>
     api.get(`/classes/${classId}/sections`),
-  create: (classId: string, data: {
-    name: string;
-    max_students: number;
-    medium?: string;
-  }) =>
+  create: (
+    classId: string,
+    data: {
+      name: string;
+      max_students: number;
+      medium?: string;
+    }
+  ) =>
     api.post(`/classes/${classId}/sections`, {
       class_id: classId,
       medium: data.medium || "english",
@@ -234,10 +234,9 @@ export const sectionApi = {
 };
 
 // ═══════════════════════════════════════════════════════════
-// STUDENTS APIs (Production Ready — All Endpoints)
+// STUDENTS APIs
 // ═══════════════════════════════════════════════════════════
 export const studentApi = {
-  // ── LIST STUDENTS (with all filters) ──
   list: (params?: {
     page?: number;
     per_page?: number;
@@ -257,7 +256,6 @@ export const studentApi = {
       },
     }),
 
-  // ── SINGLE STUDENT CRUD ──
   get: (id: string) => api.get(`/students/${id}`),
 
   create: (data: Record<string, unknown>) => api.post("/students/", data),
@@ -267,7 +265,6 @@ export const studentApi = {
 
   delete: (id: string) => api.delete(`/students/${id}`),
 
-  // ── PHOTO UPLOAD ──
   uploadPhoto: (id: string, file: File) => {
     const formData = new FormData();
     formData.append("file", file);
@@ -276,12 +273,8 @@ export const studentApi = {
     });
   },
 
-  // ── PHOTO DELETE ✅ NEW ──
-  deletePhoto: (id: string) => {
-    return api.delete(`/students/${id}/photo`);
-  },
+  deletePhoto: (id: string) => api.delete(`/students/${id}/photo`),
 
-  // ── TRANSFER TO ANOTHER SECTION ──
   transfer: (
     id: string,
     data: {
@@ -291,7 +284,6 @@ export const studentApi = {
     }
   ) => api.post(`/students/${id}/transfer`, data),
 
-  // ── BULK IMPORT (2-Step Flow) ──
   downloadTemplate: () =>
     api.get("/students/template", { responseType: "blob" }),
 
@@ -311,7 +303,6 @@ export const studentApi = {
     });
   },
 
-  // ── EXPORT AS CSV ──
   exportCsv: (params?: { section_id?: string; status?: string }) =>
     api.get("/students/export", {
       params: {
@@ -321,7 +312,6 @@ export const studentApi = {
       responseType: "blob",
     }),
 
-  // ── PARENTS MANAGEMENT ──
   linkParent: (
     studentId: string,
     data: {
@@ -336,7 +326,6 @@ export const studentApi = {
   getParents: (studentId: string) =>
     api.get(`/students/${studentId}/parents`),
 
-  // ── DOCUMENTS ──
   addDocument: (
     studentId: string,
     data: {
@@ -447,7 +436,4 @@ export const healthApi = {
     axios.get(`${API_BASE_URL.replace("/api/v1", "")}/health/detailed`),
 };
 
-// ═══════════════════════════════════════════════════════════
-// EXPORT DEFAULT
-// ═══════════════════════════════════════════════════════════
 export default api;

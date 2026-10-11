@@ -1,62 +1,51 @@
-// ============================================================
-// WEAISCHOOL TEC — Dashboard Layout
-// Sidebar + Header wrap karta hai dashboard pages ko
-// Auth check bhi yahan hota hai
-// ============================================================
-
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
-import { Sidebar } from "@/components/layout/Sidebar";
-import { Header } from "@/components/layout/Header";
+import { Loader2 } from "lucide-react";
 
-export default function DashboardLayout({
+export default function SuperAdminDashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const { isAuthenticated, user } = useAuthStore();
+  const { isAuthenticated, _hasHydrated, checkAuth } = useAuthStore();
+  const [isChecking, setIsChecking] = useState(true);
 
-  // Auth check — login nahi to login page pe bhejo
   useEffect(() => {
-    if (!isAuthenticated || !user) {
-      router.push("/login");
-      return;
-    }
+    if (typeof window === "undefined") return;
 
-    // Super admin nahi to access deny karo
-    if (user.role !== "SUPER_ADMIN") {
-      router.push("/login");
-    }
-  }, [isAuthenticated, user, router]);
+    // Direct physical inspection of localStorage (Eliminates framework race conditions)
+    const token =
+      localStorage.getItem("access_token") ||
+      localStorage.getItem("token") ||
+      localStorage.getItem("userToken");
 
-  // Loading state
-  if (!isAuthenticated || !user) {
+    const hasToken = Boolean(
+      token && token !== "undefined" && token !== "null" && token.length > 10
+    );
+
+    if (!hasToken) {
+      console.warn("[SuperAdmin Layout] No token found in storage -> redirecting to login");
+      router.replace("/login");
+    } else {
+      checkAuth();
+      setIsChecking(false);
+    }
+  }, [router, checkAuth, _hasHydrated, isAuthenticated]);
+
+  if (isChecking) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="text-slate-400">Loading...</div>
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-white">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+          <p className="text-sm text-slate-400">Verifying session...</p>
+        </div>
       </div>
     );
   }
 
-  return (
-    <div className="flex h-screen bg-slate-950 overflow-hidden">
-      {/* Sidebar */}
-      <Sidebar />
-
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
-        <Header />
-
-        {/* Page Content */}
-        <main className="flex-1 overflow-y-auto bg-slate-950 p-6">
-          {children}
-        </main>
-      </div>
-    </div>
-  );
+  return <>{children}</>;
 }
