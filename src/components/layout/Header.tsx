@@ -1,11 +1,11 @@
 // ============================================================
 // WEAISCHOOL TEC — Top Header Bar
-// User info + Logout button (Fixed for Base UI)
+// User info + Smart Logout (School Panel aware)
 // ============================================================
 
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useParams } from "next/navigation";
 import { LogOut, User, ChevronDown } from "lucide-react";
 import { useAuthStore } from "@/store/authStore";
 import { authApi } from "@/lib/api";
@@ -23,20 +23,39 @@ import { toast } from "sonner";
 
 export function Header() {
   const router = useRouter();
+  const params = useParams();
+  const slug = params?.slug as string;
+
   const { user, logout } = useAuthStore();
 
-  // Logout handler
+  // Smart Logout handler
   const handleLogout = async () => {
     try {
       await authApi.logout();
-      toast.success("Logout successful", {
-        description: "See you soon! 👋",
-      });
     } catch {
-      // Error ignore karo — logout anyway
+      // Ignore API logout errors
     } finally {
+      // 1. Wipe all local storage session tokens
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("token");
+        localStorage.removeItem("userToken");
+        localStorage.removeItem("refresh_token");
+        localStorage.removeItem("user");
+        localStorage.removeItem("weaischool-admin-auth");
+      }
+
+      // 2. Wipe AuthStore memory
       logout();
-      router.push("/login");
+
+      toast.success("Logged out successfully");
+
+      // 3. Dynamic Redirect
+      if (slug) {
+        router.replace(`/school/${slug}/login`);
+      } else {
+        router.replace("/login");
+      }
     }
   };
 
@@ -47,7 +66,7 @@ export function Header() {
         <p className="text-slate-400 text-sm">
           Welcome back,{" "}
           <span className="text-white font-medium">
-            {user?.full_name || "Super Admin"}
+            {user?.first_name || user?.full_name || "Admin"}
           </span>
         </p>
       </div>
@@ -55,15 +74,14 @@ export function Header() {
       {/* Right — User Menu */}
       <div className="flex items-center gap-3">
         <DropdownMenu>
-          {/* IMPORTANT: No asChild, no Button inside! */}
           <DropdownMenuTrigger className="flex items-center gap-2 text-slate-300 hover:text-white hover:bg-slate-800 h-9 px-3 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500">
             <Avatar className="w-7 h-7">
               <AvatarFallback className="bg-blue-600 text-white text-xs">
-                {user?.full_name ? getInitials(user.full_name) : "SA"}
+                {user?.first_name ? getInitials(user.first_name) : "A"}
               </AvatarFallback>
             </Avatar>
             <span className="text-sm hidden sm:block">
-              {user?.full_name || "Super Admin"}
+              {user?.first_name || user?.full_name || "Admin"}
             </span>
             <ChevronDown className="w-4 h-4 text-slate-500" />
           </DropdownMenuTrigger>
@@ -84,7 +102,7 @@ export function Header() {
                 <span className="truncate">{user?.email}</span>
               </div>
               <p className="mt-1 text-[10px] text-slate-500 pl-5">
-                Role: {user?.role || "SUPER_ADMIN"}
+                Role: {user?.role || "ADMIN"}
               </p>
             </div>
 
