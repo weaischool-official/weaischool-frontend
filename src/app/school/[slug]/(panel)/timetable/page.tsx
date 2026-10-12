@@ -35,7 +35,7 @@ export default function TimetableBuilderPage() {
   const [classes, setClasses] = useState<any[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<string>("");
   
-  // NEW: Sections State
+  // Sections State
   const [sections, setSections] = useState<any[]>([]);
   const [selectedSectionId, setSelectedSectionId] = useState<string>("");
   const [isLoadingSections, setIsLoadingSections] = useState(false);
@@ -50,8 +50,9 @@ export default function TimetableBuilderPage() {
     const fetchClasses = async () => {
       try {
         const res = await api.get("/classes");
-        setClasses(res.data);
-        if (res.data.length > 0) setSelectedClassId(res.data[0].id);
+        const data = res.data || [];
+        setClasses(data);
+        if (data.length > 0) setSelectedClassId(data[0].id);
       } catch (error) {
         toast.error("Failed to load classes");
       }
@@ -59,32 +60,41 @@ export default function TimetableBuilderPage() {
     fetchClasses();
   }, []);
 
-  // 2. Fetch SECTIONS when Class changes (NEW LOGIC)
+  // 2. Fetch SECTIONS when Class changes
   useEffect(() => {
     if (!selectedClassId) {
       setSections([]);
       setSelectedSectionId("");
       return;
     }
+
+    const currentClass = classes.find(c => c.id === selectedClassId);
+    if (currentClass?.sections && Array.isArray(currentClass.sections) && currentClass.sections.length > 0) {
+      setSections(currentClass.sections);
+      setSelectedSectionId(currentClass.sections[0].id);
+      return;
+    }
+
     const fetchSections = async () => {
       setIsLoadingSections(true);
       try {
-        const res = await api.get(`/sections?class_id=${selectedClassId}`);
-        setSections(res.data || []);
-        if (res.data && res.data.length > 0) {
-          setSelectedSectionId(res.data[0].id); // Auto-select first section
+        const res = await api.get(`/classes/${selectedClassId}/sections`);
+        const secData = res.data || [];
+        setSections(secData);
+        if (secData.length > 0) {
+          setSelectedSectionId(secData[0].id);
         } else {
-          setSelectedSectionId(""); // No sections available
+          setSelectedSectionId("");
         }
       } catch (error) {
-        console.error("Failed to fetch sections");
         setSections([]);
+        setSelectedSectionId("");
       } finally {
         setIsLoadingSections(false);
       }
     };
     fetchSections();
-  }, [selectedClassId]);
+  }, [selectedClassId, classes]);
 
   // 3. Fetch SUBJECTS when Class changes
   useEffect(() => {
@@ -93,7 +103,7 @@ export default function TimetableBuilderPage() {
       setIsLoading(true);
       try {
         const res = await api.get(`/class-subjects?class_id=${selectedClassId}`);
-        setClassSubjects(res.data);
+        setClassSubjects(res.data || []);
       } catch (error) {
         console.error("Failed to fetch subjects:", error);
       } finally {
@@ -143,7 +153,7 @@ export default function TimetableBuilderPage() {
   const exactMatchExists = displayedChips.some(c => c.name.toLowerCase() === subjectQuery.toLowerCase().trim()) || 
                            classSubjects.some(cs => cs.subject_name.toLowerCase() === subjectQuery.toLowerCase().trim());
 
-  // 6. Direct Add Subject
+  // 6. Direct Add Subject (With Exact Error Toasting)
   const handleAddSubject = async (name: string, color: string = "#6B7280", periods: number = 5, isCustom: boolean = false) => {
     if (!selectedClassId) {
       toast.error("Please select a class first");
@@ -160,15 +170,14 @@ export default function TimetableBuilderPage() {
         is_custom: isCustom
       });
       
-      setClassSubjects([...classSubjects, res.data]);
+      setClassSubjects(prev => [...prev, res.data]);
       setSubjectQuery(""); 
-      toast.success(`${name} added to Class ${classes.find(c => c.id === selectedClassId)?.name}!`);
+      toast.success(`${name} added!`);
     } catch (error: any) {
-      if (error.response?.status === 409) {
-        toast.error("Already added to this class");
-      } else {
-        toast.error("Failed to add subject. Is backend deployed?");
-      }
+      console.error("API Error details:", error);
+      const detail = error.response?.data?.detail;
+      const msg = typeof detail === 'string' ? detail : (error.message || "Failed to add subject");
+      toast.error(msg);
     } finally {
       setIsAddingId(null);
     }
@@ -176,13 +185,14 @@ export default function TimetableBuilderPage() {
 
   // 7. Delete Subject
   const handleDeleteSubject = async (subjectId: string, name: string) => {
-    if (!confirm(`Remove ${name}? This will remove it from all sections of this class.`)) return;
+    if (!confirm(`Remove ${name}?`)) return;
     try {
       await api.delete(`/class-subjects/${subjectId}`);
-      setClassSubjects(classSubjects.filter(s => s.id !== subjectId));
+      setClassSubjects(prev => prev.filter(s => s.id !== subjectId));
       toast.success("Subject removed");
-    } catch (error) {
-      toast.error("Failed to remove");
+    } catch (error: any) {
+      const detail = error.response?.data?.detail;
+      toast.error(typeof detail === 'string' ? detail : "Failed to remove");
     }
   };
 
@@ -210,10 +220,8 @@ export default function TimetableBuilderPage() {
         </button>
       </div>
 
-      {/* GLOBAL SELECTORS (Class & Section) */}
+      {/* GLOBAL SELECTORS */}
       <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 flex flex-wrap items-center gap-6 shadow-sm">
-        
-        {/* Class Dropdown */}
         <div className="flex-1 min-w-[200px] max-w-xs">
           <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">Select Class</label>
           <select
@@ -228,9 +236,8 @@ export default function TimetableBuilderPage() {
           </select>
         </div>
 
-        {/* Section Dropdown */}
         <div className="flex-1 min-w-[200px] max-w-xs relative">
-          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block flex items-center justify-between">
+          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
             Select Section
             {isLoadingSections && <Loader2 className="w-3 h-3 animate-spin text-blue-400" />}
           </label>
@@ -241,18 +248,17 @@ export default function TimetableBuilderPage() {
             className="w-full bg-[#0f172a] border border-slate-700 text-white rounded-lg px-3 py-2.5 outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {sections.length === 0 ? (
-              <option value="">No sections (Global Class)</option>
+              <option value="">No sections found</option>
             ) : (
               sections.map((sec) => (
-                <option key={sec.id} value={sec.id}>Section {sec.name}</option>
+                <option key={sec.id} value={sec.id}>{sec.name}</option>
               ))
             )}
           </select>
         </div>
 
-        {/* Status Badge */}
         {selectedClassId && (
-          <div className="flex items-center gap-2 text-sm text-slate-300 mt-6 md:mt-6 bg-[#0f172a] px-4 py-2 rounded-lg border border-slate-800">
+          <div className="flex items-center gap-2 text-sm text-slate-300 mt-6 bg-[#0f172a] px-4 py-2 rounded-lg border border-slate-800">
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
             <span>
               Working on: <strong className="text-white">{classes.find(c => c.id === selectedClassId)?.name}</strong> 
@@ -267,12 +273,9 @@ export default function TimetableBuilderPage() {
       {/* TAB 1: SUBJECTS SETUP */}
       {activeTab === "subjects" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
-          {/* LEFT: Smart Quick Add */}
           <div className="lg:col-span-1 space-y-4">
             <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 shadow-sm">
               <h3 className="font-bold text-white mb-4">Quick Add Subjects</h3>
-              
               <div className="relative mb-4">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
@@ -316,7 +319,7 @@ export default function TimetableBuilderPage() {
                   </button>
                 )}
               </div>
-              
+
               <div className="mt-5 p-3 bg-blue-900/10 border border-blue-900/30 rounded-lg flex items-start gap-2.5">
                 <AlertCircle className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                 <p className="text-xs text-slate-400 leading-relaxed">
@@ -326,7 +329,6 @@ export default function TimetableBuilderPage() {
             </div>
           </div>
 
-          {/* RIGHT: Added Subjects Grid */}
           <div className="lg:col-span-2">
             <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 shadow-sm min-h-[400px]">
               <h3 className="font-bold text-white flex items-center justify-between mb-5">
@@ -368,14 +370,6 @@ export default function TimetableBuilderPage() {
               )}
             </div>
           </div>
-        </div>
-      )}
-
-      {/* TABS 2 & 3 Placeholders... */}
-      {activeTab !== "subjects" && (
-        <div className="bg-[#111827] p-12 rounded-2xl border border-slate-800 text-center">
-          <p className="text-slate-400">Section coming next...</p>
-          <button onClick={() => setActiveTab("subjects")} className="mt-4 text-blue-400 font-medium text-sm">← Back</button>
         </div>
       )}
     </div>
