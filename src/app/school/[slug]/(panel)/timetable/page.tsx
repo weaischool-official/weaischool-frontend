@@ -322,6 +322,26 @@ export default function TimetableBuilderPage() {
     }
   };
 
+  // ✅ SMART MATCHING HELPER FOR DROPDOWN VALUE
+  const getAssignedTeacherValue = (assignedObj: any) => {
+    if (!assignedObj) return "";
+    const aTeacherId = assignedObj.teacher_id;
+    const aStaffId = assignedObj.staff_id;
+
+    const match = teachers.find(t => 
+      t.id === aTeacherId || 
+      t.user_id === aTeacherId || 
+      t.user?.id === aTeacherId ||
+      t.id === aStaffId ||
+      t.user_id === aStaffId
+    );
+
+    if (match) {
+      return match.user_id || match.user?.id || match.id;
+    }
+    return aTeacherId || "";
+  };
+
   const assignedCount = useMemo(() => {
     return classSubjects.filter(s => assignments[s.id]?.teacher_id).length;
   }, [classSubjects, assignments]);
@@ -563,6 +583,8 @@ export default function TimetableBuilderPage() {
                   {classSubjects.map((sub) => {
                     const assigned = assignments[sub.id];
                     const isAssigning = assigningId === sub.id;
+                    const selectedVal = getAssignedTeacherValue(assigned);
+
                     return (
                       <div key={sub.id} className={`flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-xl border transition-all ${assigned ? "border-emerald-800/50 bg-emerald-950/20" : "border-amber-800/40 bg-amber-950/10"}`}>
                         <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -587,7 +609,7 @@ export default function TimetableBuilderPage() {
                             </div>
                           ) : (
                             <select
-                              value={assigned?.teacher_id || ""}
+                              value={selectedVal}
                               onChange={(e) => handleAssignTeacher(sub.id, e.target.value)}
                               className="w-full bg-[#0f172a] border border-slate-600 text-white text-sm rounded-lg px-3 py-2.5 outline-none focus:border-blue-500"
                             >
@@ -625,29 +647,41 @@ export default function TimetableBuilderPage() {
                 <p className="text-sm text-slate-500 text-center py-8">No teacher data</p>
               ) : (
                 <div className="space-y-3 max-h-[480px] overflow-y-auto pr-1">
-                  {(workloads.length > 0 ? workloads : teachers.map(t => ({
-                    teacher_id: t.user_id || t.id,
-                    teacher_name: teacherName(t),
-                    total_periods: 0,
-                    max_periods: MAX_PERIODS,
-                    is_overloaded: false
-                  }))).map((w) => {
-                    const pct = Math.min(100, Math.round((w.total_periods / (w.max_periods || MAX_PERIODS)) * 100));
-                    const barColor = w.total_periods > MAX_PERIODS ? "bg-red-500" : pct >= 80 ? "bg-amber-500" : pct >= 50 ? "bg-blue-500" : "bg-emerald-500";
+                  {teachers.map((t) => {
+                    const tid = t.user_id || t.user?.id || t.id;
+                    const sid = t.id;
+                    const w = workloads.find((item: any) => 
+                      item.teacher_id === tid || 
+                      item.staff_id === sid || 
+                      item.teacher_id === sid
+                    ) || {
+                      teacher_id: tid,
+                      teacher_name: teacherName(t),
+                      total_periods: 0,
+                      max_periods: MAX_PERIODS,
+                      is_overloaded: false
+                    };
+
+                    const periods = w.total_periods || 0;
+                    const maxP = w.max_periods || MAX_PERIODS;
+                    const pct = Math.min(100, Math.round((periods / maxP) * 100));
+                    const isOver = periods > maxP;
+                    const barColor = isOver ? "bg-red-500" : pct >= 80 ? "bg-amber-500" : pct >= 50 ? "bg-blue-500" : "bg-emerald-500";
+
                     return (
-                      <div key={w.teacher_id} className={`p-3 rounded-xl border ${w.is_overloaded || w.total_periods > MAX_PERIODS ? "border-red-800/50 bg-red-950/20" : "border-slate-700/50 bg-slate-800/30"}`}>
+                      <div key={t.id} className={`p-3 rounded-xl border ${isOver ? "border-red-800/50 bg-red-950/20" : "border-slate-700/50 bg-slate-800/30"}`}>
                         <div className="flex items-center justify-between mb-1.5">
-                          <p className="text-sm font-medium text-slate-200 truncate pr-2">{w.teacher_name}</p>
-                          <span className={`text-xs font-bold shrink-0 ${w.total_periods > MAX_PERIODS ? "text-red-400" : "text-slate-400"}`}>
-                            {w.total_periods}/{w.max_periods || MAX_PERIODS}
+                          <p className="text-sm font-medium text-slate-200 truncate pr-2">{teacherName(t)}</p>
+                          <span className={`text-xs font-bold shrink-0 ${isOver ? "text-red-400" : "text-slate-400"}`}>
+                            {periods}/{maxP}
                           </span>
                         </div>
                         <div className="h-2 bg-slate-900 rounded-full overflow-hidden">
                           <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(pct, 100)}%` }} />
                         </div>
-                        {(w.is_overloaded || w.total_periods > MAX_PERIODS) && (
+                        {isOver && (
                           <p className="text-[10px] text-red-400 mt-1.5 flex items-center gap-1">
-                            <AlertTriangle className="w-3 h-3" /> Over {MAX_PERIODS} — warning only
+                            <AlertTriangle className="w-3 h-3" /> Over {maxP} — warning only
                           </p>
                         )}
                       </div>
