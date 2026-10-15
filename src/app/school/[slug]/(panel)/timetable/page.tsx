@@ -5,22 +5,22 @@ import { useParams } from "next/navigation";
 import api from "@/lib/api";
 import { toast } from "sonner";
 import { 
-  BookOpen, Users, CalendarDays, Search, Plus, 
-  Trash2, Edit2, Loader2, CheckCircle2, AlertCircle
+  BookOpen, Users, CalendarDays, Search, Plus, Minus,
+  Trash2, Loader2, CheckCircle2, AlertCircle
 } from "lucide-react";
 
-// Fallback Quick Subjects
+// Standard quick suggestions (Admin can adjust period count anytime)
 const QUICK_SUBJECTS = [
-  { name: "English", color: "#3B82F6", periods: 6 },
-  { name: "Hindi", color: "#10B981", periods: 5 },
-  { name: "Mathematics", color: "#F59E0B", periods: 6 },
-  { name: "Science", color: "#8B5CF6", periods: 6 },
-  { name: "Social Science", color: "#EC4899", periods: 5 },
-  { name: "Computer", color: "#78350F", periods: 3 },
-  { name: "EVS", color: "#10B981", periods: 4 },
-  { name: "General Knowledge", color: "#6B7280", periods: 2 },
-  { name: "Physical Education", color: "#DC2626", periods: 3 },
-  { name: "Art", color: "#F472B6", periods: 2 },
+  { name: "English", color: "#3B82F6" },
+  { name: "Hindi", color: "#10B981" },
+  { name: "Mathematics", color: "#F59E0B" },
+  { name: "Science", color: "#8B5CF6" },
+  { name: "Social Science", color: "#EC4899" },
+  { name: "Computer", color: "#78350F" },
+  { name: "EVS", color: "#10B981" },
+  { name: "General Knowledge", color: "#6B7280" },
+  { name: "Physical Education", color: "#DC2626" },
+  { name: "Art", color: "#F472B6" },
 ];
 
 export default function TimetableBuilderPage() {
@@ -30,6 +30,7 @@ export default function TimetableBuilderPage() {
   const [activeTab, setActiveTab] = useState<"subjects" | "teachers" | "timetable">("subjects");
   const [isLoading, setIsLoading] = useState(false);
   const [isAddingId, setIsAddingId] = useState<string | null>(null);
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   // Data States
   const [classes, setClasses] = useState<any[]>([]);
@@ -137,7 +138,7 @@ export default function TimetableBuilderPage() {
     if (subjectQuery.trim().length > 0) {
       if (apiSuggestions.length > 0) {
         chips = apiSuggestions.map(s => ({
-          name: s.name, color: s.suggested_color || "#3B82F6", periods: s.suggested_periods || 5
+          name: s.name, color: s.suggested_color || "#3B82F6"
         }));
       } else {
         chips = QUICK_SUBJECTS.filter(s => s.name.toLowerCase().includes(subjectQuery.toLowerCase()));
@@ -153,8 +154,8 @@ export default function TimetableBuilderPage() {
   const exactMatchExists = displayedChips.some(c => c.name.toLowerCase() === subjectQuery.toLowerCase().trim()) || 
                            classSubjects.some(cs => cs.subject_name.toLowerCase() === subjectQuery.toLowerCase().trim());
 
-  // 6. Direct Add Subject (With Exact Error Toasting)
-  const handleAddSubject = async (name: string, color: string = "#6B7280", periods: number = 5, isCustom: boolean = false) => {
+  // 6. Add Subject (Default 5, Admin can change anytime)
+  const handleAddSubject = async (name: string, color: string = "#3B82F6", isCustom: boolean = false) => {
     if (!selectedClassId) {
       toast.error("Please select a class first");
       return;
@@ -165,27 +166,45 @@ export default function TimetableBuilderPage() {
       const res = await api.post("/class-subjects", {
         class_id: selectedClassId,
         subject_name: name,
-        periods_per_week: periods,
+        periods_per_week: 5, // Initial default, admin adjusts via +/-
         color_code: color,
         is_custom: isCustom
       });
       
       setClassSubjects(prev => [...prev, res.data]);
       setSubjectQuery(""); 
-      toast.success(`${name} added!`);
+      toast.success(`${name} added! Adjust periods using + / -`);
     } catch (error: any) {
-      console.error("API Error details:", error);
-      const detail = error.response?.data?.detail;
-      const msg = typeof detail === 'string' ? detail : (error.message || "Failed to add subject");
+      const msg = error.response?.data?.detail || error.message || "Failed to add subject";
       toast.error(msg);
     } finally {
       setIsAddingId(null);
     }
   };
 
-  // 7. Delete Subject
+  // 7. ADMIN PERIODS PER WEEK CONTROL (+ / -)
+  const handleUpdatePeriods = async (subjectId: string, currentPeriods: number, delta: number) => {
+    const newPeriods = currentPeriods + delta;
+    if (newPeriods < 1 || newPeriods > 20) return;
+
+    setUpdatingId(subjectId);
+    try {
+      const res = await api.patch(`/class-subjects/${subjectId}`, {
+        periods_per_week: newPeriods
+      });
+
+      setClassSubjects(prev => prev.map(s => s.id === subjectId ? { ...s, periods_per_week: newPeriods } : s));
+      toast.success(`Updated to ${newPeriods} periods/week`);
+    } catch (error: any) {
+      toast.error("Failed to update periods");
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  // 8. Delete Subject
   const handleDeleteSubject = async (subjectId: string, name: string) => {
-    if (!confirm(`Remove ${name}?`)) return;
+    if (!confirm(`Remove ${name} from this class?`)) return;
     try {
       await api.delete(`/class-subjects/${subjectId}`);
       setClassSubjects(prev => prev.filter(s => s.id !== subjectId));
@@ -202,20 +221,20 @@ export default function TimetableBuilderPage() {
       {/* HEADER */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Smart Timetable</h1>
-          <p className="text-slate-400 text-sm mt-1">Manage subjects, assign teachers, and build schedules.</p>
+          <h1 className="text-2xl font-bold text-white tracking-tight">Smart Timetable Builder</h1>
+          <p className="text-slate-400 text-sm mt-1">Setup subjects, assign teachers per section, and build schedules.</p>
         </div>
       </div>
 
       {/* 3-TAB NAVIGATION */}
       <div className="flex bg-[#111827] border border-slate-800 p-1.5 rounded-xl w-fit shadow-sm overflow-x-auto">
-        <button onClick={() => setActiveTab("subjects")} className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all whitespace-nowrap ${activeTab === "subjects" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"}`}>
-          <BookOpen className="w-4 h-4" /> 1. Subjects
+        <button onClick={() => setActiveTab("subjects")} className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all whitespace-nowrap ${activeTab === "subjects" ? "bg-blue-600 text-white shadow-md shadow-blue-900/30" : "text-slate-400 hover:text-white"}`}>
+          <BookOpen className="w-4 h-4" /> 1. Subjects Setup
         </button>
-        <button onClick={() => setActiveTab("teachers")} className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all whitespace-nowrap ${activeTab === "teachers" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"}`}>
-          <Users className="w-4 h-4" /> 2. Teachers
+        <button onClick={() => setActiveTab("teachers")} className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all whitespace-nowrap ${activeTab === "teachers" ? "bg-blue-600 text-white shadow-md shadow-blue-900/30" : "text-slate-400 hover:text-white"}`}>
+          <Users className="w-4 h-4" /> 2. Assign Teachers
         </button>
-        <button onClick={() => setActiveTab("timetable")} className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all whitespace-nowrap ${activeTab === "timetable" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"}`}>
+        <button onClick={() => setActiveTab("timetable")} className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all whitespace-nowrap ${activeTab === "timetable" ? "bg-blue-600 text-white shadow-md shadow-blue-900/30" : "text-slate-400 hover:text-white"}`}>
           <CalendarDays className="w-4 h-4" /> 3. Build Grid
         </button>
       </div>
@@ -292,7 +311,7 @@ export default function TimetableBuilderPage() {
                   <button
                     key={idx}
                     disabled={isAddingId === chip.name}
-                    onClick={() => handleAddSubject(chip.name, chip.color, chip.periods)}
+                    onClick={() => handleAddSubject(chip.name, chip.color)}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-sm text-slate-300 transition-colors disabled:opacity-50"
                   >
                     {isAddingId === chip.name ? (
@@ -307,7 +326,7 @@ export default function TimetableBuilderPage() {
                 {subjectQuery.trim() !== "" && !exactMatchExists && (
                   <button
                     disabled={isAddingId === subjectQuery.trim()}
-                    onClick={() => handleAddSubject(subjectQuery.trim(), "#6B7280", 5, true)}
+                    onClick={() => handleAddSubject(subjectQuery.trim(), "#6B7280", true)}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-900/30 hover:bg-blue-900/50 border border-blue-800 rounded-lg text-sm text-blue-300 transition-colors"
                   >
                     {isAddingId === subjectQuery.trim() ? (
@@ -323,7 +342,7 @@ export default function TimetableBuilderPage() {
               <div className="mt-5 p-3 bg-blue-900/10 border border-blue-900/30 rounded-lg flex items-start gap-2.5">
                 <AlertCircle className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                 <p className="text-xs text-slate-400 leading-relaxed">
-                  Subjects are added to the <strong>entire class</strong>. You will assign teachers per section in the next step.
+                  Subjects are added to the class. Use the <strong>+ / - buttons</strong> on each card to set required periods per week.
                 </p>
               </div>
             </div>
@@ -334,7 +353,7 @@ export default function TimetableBuilderPage() {
               <h3 className="font-bold text-white flex items-center justify-between mb-5">
                 <span className="flex items-center gap-2">
                   <BookOpen className="w-4 h-4 text-blue-400" /> 
-                  Subjects for {classes.find(c => c.id === selectedClassId)?.name}
+                  Configured Subjects for {classes.find(c => c.id === selectedClassId)?.name}
                 </span>
                 <span className="text-xs font-semibold bg-slate-800 text-slate-300 px-3 py-1 rounded-full border border-slate-700">
                   Total: {classSubjects.length}
@@ -351,17 +370,47 @@ export default function TimetableBuilderPage() {
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {classSubjects.map((sub) => (
-                    <div key={sub.id} className="group flex items-center justify-between p-3 rounded-xl border border-slate-700/50 bg-slate-800/40 hover:bg-slate-800 transition-all">
+                    <div key={sub.id} className="group flex items-center justify-between p-3.5 rounded-xl border border-slate-700/50 bg-slate-800/40 hover:bg-slate-800 transition-all">
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg flex items-center justify-center shadow-inner" style={{ backgroundColor: `${sub.color_code}20`, border: `1px solid ${sub.color_code}40` }}>
-                          <BookOpen className="w-3.5 h-3.5" style={{ color: sub.color_code }} />
+                        <div className="w-9 h-9 rounded-lg flex items-center justify-center shadow-inner" style={{ backgroundColor: `${sub.color_code}20`, border: `1px solid ${sub.color_code}40` }}>
+                          <BookOpen className="w-4 h-4" style={{ color: sub.color_code }} />
                         </div>
                         <div>
                           <p className="text-sm font-bold text-slate-200">{sub.subject_name}</p>
-                          <p className="text-xs text-slate-400">{sub.periods_per_week} periods/week</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            {/* ADMIN PERIODS CONTROL (- / +) */}
+                            <div className="flex items-center gap-1.5 bg-[#0f172a] border border-slate-700 rounded-lg px-2 py-0.5">
+                              <button
+                                onClick={() => handleUpdatePeriods(sub.id, sub.periods_per_week, -1)}
+                                disabled={updatingId === sub.id || sub.periods_per_week <= 1}
+                                className="text-slate-400 hover:text-white disabled:opacity-30 p-0.5"
+                                title="Decrease periods/week"
+                              >
+                                <Minus className="w-3 h-3" />
+                              </button>
+
+                              <span className="text-xs font-bold text-blue-400 min-w-[50px] text-center">
+                                {updatingId === sub.id ? "..." : `${sub.periods_per_week} / wk`}
+                              </span>
+
+                              <button
+                                onClick={() => handleUpdatePeriods(sub.id, sub.periods_per_week, 1)}
+                                disabled={updatingId === sub.id || sub.periods_per_week >= 20}
+                                className="text-slate-400 hover:text-white disabled:opacity-30 p-0.5"
+                                title="Increase periods/week"
+                              >
+                                <Plus className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                      <button onClick={() => handleDeleteSubject(sub.id, sub.subject_name)} className="p-1.5 text-slate-400 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity">
+
+                      <button 
+                        onClick={() => handleDeleteSubject(sub.id, sub.subject_name)} 
+                        className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-950/30 rounded-lg transition-all"
+                        title="Remove Subject"
+                      >
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
@@ -370,6 +419,14 @@ export default function TimetableBuilderPage() {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* TAB 2 & TAB 3 Placeholders... */}
+      {activeTab !== "subjects" && (
+        <div className="bg-[#111827] p-12 rounded-2xl border border-slate-800 text-center">
+          <p className="text-slate-400">Step {activeTab === "teachers" ? "2: Assign Teachers per Section" : "3: Drag & Drop Grid Builder"} coming next!</p>
+          <button onClick={() => setActiveTab("subjects")} className="mt-4 text-blue-400 font-medium text-sm">← Back to Subjects Setup</button>
         </div>
       )}
     </div>
