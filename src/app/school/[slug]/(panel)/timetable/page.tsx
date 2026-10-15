@@ -9,7 +9,6 @@ import {
   Trash2, Loader2, CheckCircle2, AlertCircle, UserCheck, AlertTriangle
 } from "lucide-react";
 
-// Standard quick suggestions
 const QUICK_SUBJECTS = [
   { name: "English", color: "#3B82F6" },
   { name: "Hindi", color: "#10B981" },
@@ -316,8 +315,8 @@ export default function TimetableBuilderPage() {
         toast.success(`Assigned to ${res.data.teacher_name}`);
       }
     } catch (e: any) {
-      const msg = e.response?.data?.detail || e.message || "Failed to assign teacher";
-      toast.error(typeof msg === "string" ? msg : "Failed to assign");
+      const detail = e.response?.data?.detail || e.response?.data?.message || e.message;
+      toast.error(typeof detail === "string" ? detail : "Failed to assign teacher");
     } finally {
       setAssigningId(null);
     }
@@ -594,7 +593,6 @@ export default function TimetableBuilderPage() {
                             >
                               <option value="">-- Select Teacher --</option>
                               {teachers.map((t) => {
-                                // ✅ CRITICAL FIX: Send User.id / User_id directly!
                                 const realTeacherId = t.user_id || t.user?.id || t.id;
                                 return (
                                   <option key={t.id} value={realTeacherId}>
