@@ -337,9 +337,9 @@ export default function TimetableBuilderPage() {
     );
 
     if (match) {
-      return match.user_id || match.user?.id || match.id;
+      return match.id || match.user_id || match.user?.id;
     }
-    return aTeacherId || "";
+    return aTeacherId || aStaffId || "";
   };
 
   const assignedCount = useMemo(() => {
@@ -615,7 +615,7 @@ export default function TimetableBuilderPage() {
                             >
                               <option value="">-- Select Teacher --</option>
                               {teachers.map((t) => {
-                                const realTeacherId = t.user_id || t.user?.id || t.id;
+                                const realTeacherId = t.id || t.user_id || t.user?.id;
                                 return (
                                   <option key={t.id} value={realTeacherId}>
                                     {teacherName(t)}
