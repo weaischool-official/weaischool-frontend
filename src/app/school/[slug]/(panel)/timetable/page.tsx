@@ -9,7 +9,7 @@ import {
   Trash2, Loader2, CheckCircle2, AlertCircle
 } from "lucide-react";
 
-// Standard quick suggestions (Admin can adjust period count anytime)
+// Standard quick suggestions
 const QUICK_SUBJECTS = [
   { name: "English", color: "#3B82F6" },
   { name: "Hindi", color: "#10B981" },
@@ -97,13 +97,18 @@ export default function TimetableBuilderPage() {
     fetchSections();
   }, [selectedClassId, classes]);
 
-  // 3. Fetch SUBJECTS when Class changes
+  // 3. Fetch SUBJECTS per Class + Section (Isolated per section!)
   useEffect(() => {
     if (!selectedClassId) return;
+
     const fetchSubjects = async () => {
       setIsLoading(true);
       try {
-        const res = await api.get(`/class-subjects?class_id=${selectedClassId}`);
+        let url = `/class-subjects?class_id=${selectedClassId}`;
+        if (selectedSectionId) {
+          url += `&section_id=${selectedSectionId}`;
+        }
+        const res = await api.get(url);
         setClassSubjects(res.data || []);
       } catch (error) {
         console.error("Failed to fetch subjects:", error);
@@ -112,7 +117,7 @@ export default function TimetableBuilderPage() {
       }
     };
     fetchSubjects();
-  }, [selectedClassId]);
+  }, [selectedClassId, selectedSectionId]);
 
   // 4. Fetch API Suggestions as user types
   useEffect(() => {
@@ -154,7 +159,7 @@ export default function TimetableBuilderPage() {
   const exactMatchExists = displayedChips.some(c => c.name.toLowerCase() === subjectQuery.toLowerCase().trim()) || 
                            classSubjects.some(cs => cs.subject_name.toLowerCase() === subjectQuery.toLowerCase().trim());
 
-  // 6. Add Subject (Default 5, Admin can change anytime)
+  // 6. Add Subject (Scoped to selected section!)
   const handleAddSubject = async (name: string, color: string = "#3B82F6", isCustom: boolean = false) => {
     if (!selectedClassId) {
       toast.error("Please select a class first");
@@ -165,15 +170,16 @@ export default function TimetableBuilderPage() {
     try {
       const res = await api.post("/class-subjects", {
         class_id: selectedClassId,
+        section_id: selectedSectionId || null, // ✅ Section-isolated subject add
         subject_name: name,
-        periods_per_week: 5, // Initial default, admin adjusts via +/-
+        periods_per_week: 5,
         color_code: color,
         is_custom: isCustom
       });
       
       setClassSubjects(prev => [...prev, res.data]);
       setSubjectQuery(""); 
-      toast.success(`${name} added! Adjust periods using + / -`);
+      toast.success(`${name} added to ${getSelectedContextName()}!`);
     } catch (error: any) {
       const msg = error.response?.data?.detail || error.message || "Failed to add subject";
       toast.error(msg);
@@ -189,7 +195,7 @@ export default function TimetableBuilderPage() {
 
     setUpdatingId(subjectId);
     try {
-      const res = await api.patch(`/class-subjects/${subjectId}`, {
+      await api.patch(`/class-subjects/${subjectId}`, {
         periods_per_week: newPeriods
       });
 
@@ -204,7 +210,7 @@ export default function TimetableBuilderPage() {
 
   // 8. Delete Subject
   const handleDeleteSubject = async (subjectId: string, name: string) => {
-    if (!confirm(`Remove ${name} from this class?`)) return;
+    if (!confirm(`Remove ${name} from ${getSelectedContextName()}?`)) return;
     try {
       await api.delete(`/class-subjects/${subjectId}`);
       setClassSubjects(prev => prev.filter(s => s.id !== subjectId));
@@ -215,6 +221,15 @@ export default function TimetableBuilderPage() {
     }
   };
 
+  // Helper for UI Text
+  const getSelectedContextName = () => {
+    const clsName = classes.find(c => c.id === selectedClassId)?.name || "";
+    const secName = sections.find(s => s.id === selectedSectionId)?.name || "";
+    if (clsName && secName) return `Class ${clsName} (Section ${secName})`;
+    if (clsName) return `Class ${clsName}`;
+    return "...";
+  };
+
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6 text-slate-200">
       
@@ -222,7 +237,7 @@ export default function TimetableBuilderPage() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white tracking-tight">Smart Timetable Builder</h1>
-          <p className="text-slate-400 text-sm mt-1">Setup subjects, assign teachers per section, and build schedules.</p>
+          <p className="text-slate-400 text-sm mt-1">Setup section-wise subjects, assign teachers, and build schedules.</p>
         </div>
       </div>
 
@@ -280,10 +295,7 @@ export default function TimetableBuilderPage() {
           <div className="flex items-center gap-2 text-sm text-slate-300 mt-6 bg-[#0f172a] px-4 py-2 rounded-lg border border-slate-800">
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
             <span>
-              Working on: <strong className="text-white">{classes.find(c => c.id === selectedClassId)?.name}</strong> 
-              {selectedSectionId && sections.length > 0 && (
-                <> (Section <strong className="text-white">{sections.find(s => s.id === selectedSectionId)?.name}</strong>)</>
-              )}
+              Working on: <strong className="text-white">{getSelectedContextName()}</strong>
             </span>
           </div>
         )}
@@ -342,7 +354,7 @@ export default function TimetableBuilderPage() {
               <div className="mt-5 p-3 bg-blue-900/10 border border-blue-900/30 rounded-lg flex items-start gap-2.5">
                 <AlertCircle className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                 <p className="text-xs text-slate-400 leading-relaxed">
-                  Subjects are added to the class. Use the <strong>+ / - buttons</strong> on each card to set required periods per week.
+                  Subjects are saved specifically for <strong>{getSelectedContextName()}</strong>. Switch section above to configure another section.
                 </p>
               </div>
             </div>
@@ -353,7 +365,7 @@ export default function TimetableBuilderPage() {
               <h3 className="font-bold text-white flex items-center justify-between mb-5">
                 <span className="flex items-center gap-2">
                   <BookOpen className="w-4 h-4 text-blue-400" /> 
-                  Configured Subjects for {classes.find(c => c.id === selectedClassId)?.name}
+                  Configured Subjects for {getSelectedContextName()}
                 </span>
                 <span className="text-xs font-semibold bg-slate-800 text-slate-300 px-3 py-1 rounded-full border border-slate-700">
                   Total: {classSubjects.length}
@@ -364,8 +376,8 @@ export default function TimetableBuilderPage() {
                 <div className="flex justify-center py-20 text-slate-400"><Loader2 className="w-6 h-6 animate-spin" /></div>
               ) : classSubjects.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-slate-500 border-2 border-dashed border-slate-800 rounded-xl">
-                  <p className="text-sm font-medium text-slate-300">No subjects added</p>
-                  <p className="text-xs mt-1">Click a chip on the left to add quickly.</p>
+                  <p className="text-sm font-medium text-slate-300">No subjects configured for this section</p>
+                  <p className="text-xs mt-1">Click a chip on the left to add subjects for {getSelectedContextName()}.</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -422,7 +434,7 @@ export default function TimetableBuilderPage() {
         </div>
       )}
 
-      {/* TAB 2 & TAB 3 Placeholders... */}
+      {/* TAB 2 & TAB 3 Placeholders */}
       {activeTab !== "subjects" && (
         <div className="bg-[#111827] p-12 rounded-2xl border border-slate-800 text-center">
           <p className="text-slate-400">Step {activeTab === "teachers" ? "2: Assign Teachers per Section" : "3: Drag & Drop Grid Builder"} coming next!</p>
