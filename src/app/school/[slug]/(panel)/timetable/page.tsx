@@ -68,6 +68,28 @@ export default function TimetableBuilderPage() {
     return n || t.email || "Teacher";
   };
 
+  // ✅ ULTRA-SAFE HELPER: Extract subjects from teacher profile in lowercase string array
+  const getTeacherSubjectsArray = (t: any) => {
+    if (!t || !t.subjects) return [];
+    
+    // If it's an array (e.g. ["Math", "Science"] or [{name: "Math"}])
+    if (Array.isArray(t.subjects)) {
+      return t.subjects.map((s: any) => {
+        if (typeof s === 'string') return s.toLowerCase().trim();
+        if (s && typeof s === 'object' && s.name) return String(s.name).toLowerCase().trim();
+        if (s && typeof s === 'object' && s.subject_name) return String(s.subject_name).toLowerCase().trim();
+        return "";
+      }).filter(Boolean);
+    }
+    
+    // If it's a comma separated string (e.g. "Mathematics, Science")
+    if (typeof t.subjects === 'string') {
+      return t.subjects.split(',').map(s => s.toLowerCase().trim());
+    }
+    
+    return [];
+  };
+
   // 1. Fetch Classes on mount
   useEffect(() => {
     const fetchClasses = async () => {
@@ -584,6 +606,18 @@ export default function TimetableBuilderPage() {
                     const assigned = assignments[sub.id];
                     const isAssigning = assigningId === sub.id;
                     const selectedVal = getAssignedTeacherValue(assigned);
+                    const targetSubName = sub.subject_name.toLowerCase().trim();
+
+                    // ✅ SMART FILTER LOGIC
+                    const eligibleTeachers = teachers.filter(t => {
+                      const realId = t.id || t.user_id || t.user?.id;
+                      // Option 1: Teacher is already assigned to this slot (protects UI from breaking if subject removed later)
+                      if (realId === selectedVal) return true;
+                      
+                      // Option 2: Teacher's profile has this subject
+                      const tSubs = getTeacherSubjectsArray(t);
+                      return tSubs.includes(targetSubName);
+                    });
 
                     return (
                       <div key={sub.id} className={`flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-xl border transition-all ${assigned ? "border-emerald-800/50 bg-emerald-950/20" : "border-amber-800/40 bg-amber-950/10"}`}>
@@ -611,10 +645,10 @@ export default function TimetableBuilderPage() {
                             <select
                               value={selectedVal}
                               onChange={(e) => handleAssignTeacher(sub.id, e.target.value)}
-                              className="w-full bg-[#0f172a] border border-slate-600 text-white text-sm rounded-lg px-3 py-2.5 outline-none focus:border-blue-500"
+                              className={`w-full bg-[#0f172a] border text-sm rounded-lg px-3 py-2.5 outline-none transition-colors ${eligibleTeachers.length === 0 ? "border-red-900/50 text-slate-500" : "border-slate-600 text-white focus:border-blue-500"}`}
                             >
                               <option value="">-- Select Teacher --</option>
-                              {teachers.map((t) => {
+                              {eligibleTeachers.map((t) => {
                                 const realTeacherId = t.id || t.user_id || t.user?.id;
                                 return (
                                   <option key={t.id} value={realTeacherId}>
@@ -622,6 +656,9 @@ export default function TimetableBuilderPage() {
                                   </option>
                                 );
                               })}
+                              {eligibleTeachers.length === 0 && (
+                                <option disabled value="none">No teachers with "{sub.subject_name}"</option>
+                              )}
                             </select>
                           )}
                         </div>
@@ -633,7 +670,7 @@ export default function TimetableBuilderPage() {
             </div>
           </div>
 
-          {/* RIGHT: Workload panel */}
+          {/* RIGHT: Workload panel (Shows all teachers) */}
           <div className="lg:col-span-1">
             <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 sticky top-4">
               <h3 className="font-bold text-white flex items-center gap-2 mb-1">
