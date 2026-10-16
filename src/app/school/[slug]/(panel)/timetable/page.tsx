@@ -68,23 +68,23 @@ export default function TimetableBuilderPage() {
     return n || t.email || "Teacher";
   };
 
-  // ✅ ULTRA-SAFE HELPER: Extract subjects from teacher profile in lowercase string array
+  // ✅ ULTRA-SAFE & SMART HELPER: Extract subjects from staff profile (checks extras.subjects too!)
   const getTeacherSubjectsArray = (t: any) => {
-    if (!t || !t.subjects) return [];
+    if (!t) return [];
     
-    // If it's an array (e.g. ["Math", "Science"] or [{name: "Math"}])
-    if (Array.isArray(t.subjects)) {
-      return t.subjects.map((s: any) => {
+    // Check root level, extras, extras_data, subjects_taught
+    let rawSubjects = t.subjects || t.extras?.subjects || t.extras_data?.subjects || t.subjects_taught || "";
+    
+    if (Array.isArray(rawSubjects)) {
+      return rawSubjects.map((s: any) => {
         if (typeof s === 'string') return s.toLowerCase().trim();
-        if (s && typeof s === 'object' && s.name) return String(s.name).toLowerCase().trim();
-        if (s && typeof s === 'object' && s.subject_name) return String(s.subject_name).toLowerCase().trim();
+        if (s && typeof s === 'object' && (s.name || s.subject_name)) return String(s.name || s.subject_name).toLowerCase().trim();
         return "";
       }).filter(Boolean);
     }
     
-    // If it's a comma separated string (e.g. "Mathematics, Science")
-    if (typeof t.subjects === 'string') {
-      return t.subjects.split(',').map(s => s.toLowerCase().trim());
+    if (typeof rawSubjects === 'string') {
+      return rawSubjects.split(',').map(s => s.toLowerCase().trim()).filter(Boolean);
     }
     
     return [];
@@ -608,15 +608,25 @@ export default function TimetableBuilderPage() {
                     const selectedVal = getAssignedTeacherValue(assigned);
                     const targetSubName = sub.subject_name.toLowerCase().trim();
 
-                    // ✅ SMART FILTER LOGIC
+                    // ✅ BULLETPROOF SMART FILTER LOGIC
                     const eligibleTeachers = teachers.filter(t => {
                       const realId = t.id || t.user_id || t.user?.id;
-                      // Option 1: Teacher is already assigned to this slot (protects UI from breaking if subject removed later)
-                      if (realId === selectedVal) return true;
                       
-                      // Option 2: Teacher's profile has this subject
+                      // Condition 1: If teacher is ALREADY assigned to this subject, keep them in dropdown!
+                      if (realId && selectedVal && realId === selectedVal) return true;
+                      
+                      // Condition 2: Extract teacher's profile subjects
                       const tSubs = getTeacherSubjectsArray(t);
-                      return tSubs.includes(targetSubName);
+                      
+                      // Condition 3: If teacher has NO subjects configured in staff profile at all -> show as fallback
+                      if (tSubs.length === 0) return true;
+                      
+                      // Condition 4: Smart match target subject name
+                      return tSubs.some(s => 
+                        s === targetSubName || 
+                        s.includes(targetSubName) || 
+                        targetSubName.includes(s)
+                      );
                     });
 
                     return (
