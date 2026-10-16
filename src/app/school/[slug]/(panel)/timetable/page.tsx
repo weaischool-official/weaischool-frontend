@@ -25,6 +25,15 @@ const QUICK_SUBJECTS = [
 
 const MAX_PERIODS = 30;
 
+// Alias mapping for smart matching (e.g. IT = Information Technology)
+const SUBJECT_ALIASES: Record<string, string[]> = {
+  "information technology": ["it", "computer", "computers", "computer science", "cs", "ip"],
+  "computer": ["it", "information technology", "computer science", "cs"],
+  "mathematics": ["math", "maths"],
+  "social science": ["sst", "social studies", "history", "geography", "civics"],
+  "science": ["physics", "chemistry", "biology", "evs"],
+};
+
 export default function TimetableBuilderPage() {
   const params = useParams();
 
@@ -69,7 +78,7 @@ export default function TimetableBuilderPage() {
     return n || t.email || "Teacher";
   };
 
-  // ✅ ULTRA-SAFE & SMART HELPER: Extract subjects from staff profile (checks extras.subjects properly!)
+  // Extract subjects array from teacher profile
   const getTeacherSubjectsArray = (t: any): string[] => {
     if (!t) return [];
     
@@ -98,11 +107,9 @@ export default function TimetableBuilderPage() {
       }
     };
 
-    // 1. Root level arrays
     addSource(t.subjects);
     addSource(t.subjects_taught);
 
-    // 2. Extras JSON object parsing (sometimes comes as string from Postgres)
     let extrasObj = t.extras;
     if (typeof extrasObj === 'string') {
       try { extrasObj = JSON.parse(extrasObj); } catch(e) { extrasObj = {}; }
@@ -111,7 +118,6 @@ export default function TimetableBuilderPage() {
       addSource(extrasObj.subjects);
     }
 
-    // 3. Extras data JSON object parsing
     let extrasDataObj = t.extras_data;
     if (typeof extrasDataObj === 'string') {
       try { extrasDataObj = JSON.parse(extrasDataObj); } catch(e) { extrasDataObj = {}; }
@@ -121,6 +127,31 @@ export default function TimetableBuilderPage() {
     }
 
     return Array.from(allSubjs).filter(Boolean);
+  };
+
+  // Smart matching helper
+  const isSubjectMatch = (targetSubject: string, teacherSubjects: string[]): boolean => {
+    if (!targetSubject || teacherSubjects.length === 0) return false;
+    const target = targetSubject.toLowerCase().trim();
+
+    // 1. Exact match or inclusion match
+    for (const ts of teacherSubjects) {
+      if (ts === target || ts.includes(target) || target.includes(ts)) {
+        return true;
+      }
+    }
+
+    // 2. Alias match (e.g. IT vs Information Technology)
+    const aliases = SUBJECT_ALIASES[target] || [];
+    for (const alias of aliases) {
+      for (const ts of teacherSubjects) {
+        if (ts === alias || ts.includes(alias) || alias.includes(ts)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   };
 
   // 1. Fetch Classes on mount
@@ -377,7 +408,7 @@ export default function TimetableBuilderPage() {
     }
   };
 
-  // ✅ SMART MATCHING HELPER FOR DROPDOWN VALUE
+  // Helper for assigned teacher dropdown selection value
   const getAssignedTeacherValue = (assignedObj: any) => {
     if (!assignedObj) return "";
     const aTeacherId = assignedObj.teacher_id;
@@ -639,19 +670,18 @@ export default function TimetableBuilderPage() {
                     const assigned = assignments[sub.id];
                     const isAssigning = assigningId === sub.id;
                     const selectedVal = getAssignedTeacherValue(assigned);
-                    const targetSubName = sub.subject_name.toLowerCase().trim();
+                    const subName = sub.subject_name;
 
-                    // ✅ STRICT FILTERING: Only exact matches, NO fallback!
-                    const eligibleTeachers = teachers.filter(t => {
-                      const realId = t.id || t.user_id || t.user?.id;
-                      
-                      // 1. If teacher is ALREADY assigned to this subject, keep them in dropdown
-                      if (realId && selectedVal && realId === selectedVal) return true;
-                      
-                      // 2. Exact match check
+                    // SMART MATCH TEACHERS
+                    const matchingTeachers = teachers.filter(t => {
                       const tSubs = getTeacherSubjectsArray(t);
-                      return tSubs.includes(targetSubName);
+                      return isSubjectMatch(subName, tSubs);
                     });
+
+                    // If matching teachers exist, show them first.
+                    // If no matching teachers found OR teacher is already assigned, include all teachers as fallback!
+                    const showAllFallback = matchingTeachers.length === 0;
+                    const displayTeachers = showAllFallback ? teachers : matchingTeachers;
 
                     return (
                       <div key={sub.id} className={`flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-xl border transition-all ${assigned ? "border-emerald-800/50 bg-emerald-950/20" : "border-amber-800/40 bg-amber-950/10"}`}>
@@ -679,20 +709,18 @@ export default function TimetableBuilderPage() {
                             <select
                               value={selectedVal}
                               onChange={(e) => handleAssignTeacher(sub.id, e.target.value)}
-                              className={`w-full bg-[#0f172a] border text-sm rounded-lg px-3 py-2.5 outline-none transition-colors ${eligibleTeachers.length === 0 ? "border-red-900/50 text-slate-500" : "border-slate-600 text-white focus:border-blue-500"}`}
+                              className="w-full bg-[#0f172a] border border-slate-600 text-sm text-white rounded-lg px-3 py-2.5 outline-none focus:border-blue-500"
                             >
                               <option value="">-- Select Teacher --</option>
-                              {eligibleTeachers.map((t) => {
+                              {displayTeachers.map((t) => {
                                 const realTeacherId = t.id || t.user_id || t.user?.id;
+                                const isMatched = isSubjectMatch(subName, getTeacherSubjectsArray(t));
                                 return (
                                   <option key={t.id} value={realTeacherId}>
-                                    {teacherName(t)}
+                                    {teacherName(t)} {!isMatched && showAllFallback ? " (Other Teacher)" : ""}
                                   </option>
                                 );
                               })}
-                              {eligibleTeachers.length === 0 && (
-                                <option disabled value="none">No teachers with "{sub.subject_name}"</option>
-                              )}
                             </select>
                           )}
                         </div>
@@ -704,7 +732,7 @@ export default function TimetableBuilderPage() {
             </div>
           </div>
 
-          {/* RIGHT: Workload panel (Shows all teachers) */}
+          {/* RIGHT: Workload panel */}
           <div className="lg:col-span-1">
             <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 sticky top-4">
               <h3 className="font-bold text-white flex items-center gap-2 mb-1">
