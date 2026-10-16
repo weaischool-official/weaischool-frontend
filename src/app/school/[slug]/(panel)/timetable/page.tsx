@@ -25,48 +25,89 @@ const QUICK_SUBJECTS = [
 
 const MAX_PERIODS = 30;
 
-// Extract subjects array from teacher staff profile
-const getTeacherSubjectsArray = (t: any): string[] => {
-  if (!t) return [];
-  const list: string[] = [];
+// 1. Strict Subject Matching Engine using Synonym Groups
+const matchSubjects = (classSubject: string, teacherSubject: string): boolean => {
+  if (!classSubject || !teacherSubject) return false;
 
-  const add = (val: any) => {
+  const normClass = String(classSubject).toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+  const normTeacher = String(teacherSubject).toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+
+  if (!normClass || !normTeacher) return false;
+
+  // Direct exact match after normalization
+  if (normClass === normTeacher) return true;
+
+  // Discrete Group Matching (Prevents Science vs Social Science cross contamination)
+  const SynonymGroups: string[][] = [
+    ["mathematics", "maths", "math"],
+    ["informationtechnology", "it", "computer", "computers", "computerscience", "cs", "ip"],
+    ["socialscience", "sst", "socialstudies", "history", "geography", "civics"],
+    ["science", "physics", "chemistry", "biology"],
+    ["physicaleducation", "pe", "sports"],
+    ["generalknowledge", "gk"],
+    ["evs", "environmentalstudies", "environmentalscience"],
+    ["art", "drawing", "craft"],
+    ["english"],
+    ["hindi"]
+  ];
+
+  for (const group of SynonymGroups) {
+    if (group.includes(normClass) && group.includes(normTeacher)) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+// 2. Safe Subject Extraction from Staff Profiles
+const getTeacherSubjects = (t: any): string[] => {
+  if (!t) return [];
+  const found: string[] = [];
+
+  const extract = (val: any) => {
     if (!val) return;
     if (Array.isArray(val)) {
-      val.forEach(item => add(item));
-    } else if (typeof val === 'string') {
-      const str = val.trim();
-      if (str.startsWith('[') && str.endsWith(']')) {
+      val.forEach(item => extract(item));
+      return;
+    }
+    if (typeof val === 'string') {
+      const trimmed = val.trim();
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
         try {
-          const parsed = JSON.parse(str);
+          const parsed = JSON.parse(trimmed);
           if (Array.isArray(parsed)) {
-            parsed.forEach(p => add(p));
+            parsed.forEach(p => extract(p));
             return;
           }
         } catch (e) {}
       }
-      str.split(',').forEach(s => {
+      trimmed.split(',').forEach(s => {
         const clean = s.trim();
-        if (clean) list.push(clean);
+        if (clean) found.push(clean);
       });
-    } else if (typeof val === 'object') {
+      return;
+    }
+    if (typeof val === 'object') {
       const name = val.name || val.subject_name || val.subject || '';
-      if (name && typeof name === 'string') list.push(name.trim());
+      if (typeof name === 'string' && name.trim()) {
+        found.push(name.trim());
+      }
     }
   };
 
-  add(t.subjects);
-  add(t.subjects_taught);
-  add(t.subject);
+  extract(t.subjects);
+  extract(t.subjects_taught);
+  extract(t.subject);
 
   let extras = t.extras;
   if (typeof extras === 'string') {
     try { extras = JSON.parse(extras); } catch (e) { extras = null; }
   }
   if (extras && typeof extras === 'object') {
-    add(extras.subjects);
-    add(extras.subject);
-    add(extras.subjects_taught);
+    extract(extras.subjects);
+    extract(extras.subject);
+    extract(extras.subjects_taught);
   }
 
   let extrasData = t.extras_data;
@@ -74,55 +115,22 @@ const getTeacherSubjectsArray = (t: any): string[] => {
     try { extrasData = JSON.parse(extrasData); } catch (e) { extrasData = null; }
   }
   if (extrasData && typeof extrasData === 'object') {
-    add(extrasData.subjects);
-    add(extrasData.subject);
+    extract(extrasData.subjects);
+    extract(extrasData.subject);
   }
 
   if (t.user) {
-    add(t.user.subjects);
+    extract(t.user.subjects);
     let uExtras = t.user.extras;
     if (typeof uExtras === 'string') {
       try { uExtras = JSON.parse(uExtras); } catch (e) { uExtras = null; }
     }
     if (uExtras && typeof uExtras === 'object') {
-      add(uExtras.subjects);
+      extract(uExtras.subjects);
     }
   }
 
-  return Array.from(new Set(list));
-};
-
-// Subject Matching Logic
-const isSubjectMatch = (targetSubject: string, teacherSubjects: string[]): boolean => {
-  if (!targetSubject || !teacherSubjects || teacherSubjects.length === 0) return false;
-
-  const tNorm = targetSubject.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-  for (const ts of teacherSubjects) {
-    const tsNorm = ts.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-    if (tNorm === tsNorm || tNorm.includes(tsNorm) || tsNorm.includes(tNorm)) {
-      return true;
-    }
-
-    const isTargetIT = ['it', 'computer', 'computers', 'computerscience', 'cs', 'informationtechnology'].some(k => tNorm.includes(k));
-    const isTeacherIT = ['it', 'computer', 'computers', 'computerscience', 'cs', 'informationtechnology'].some(k => tsNorm.includes(k));
-    if (isTargetIT && isTeacherIT) return true;
-
-    const isTargetMath = ['math', 'maths', 'mathematics'].some(k => tNorm.includes(k));
-    const isTeacherMath = ['math', 'maths', 'mathematics'].some(k => tsNorm.includes(k));
-    if (isTargetMath && isTeacherMath) return true;
-
-    const isTargetSST = ['sst', 'socialstudies', 'socialscience', 'history', 'geography', 'civics'].some(k => tNorm.includes(k));
-    const isTeacherSST = ['sst', 'socialstudies', 'socialscience', 'history', 'geography', 'civics'].some(k => tsNorm.includes(k));
-    if (isTargetSST && isTeacherSST) return true;
-
-    const isTargetSci = ['science', 'physics', 'chemistry', 'biology'].some(k => tNorm.includes(k));
-    const isTeacherSci = ['science', 'physics', 'chemistry', 'biology'].some(k => tsNorm.includes(k));
-    if (isTargetSci && isTeacherSci) return true;
-  }
-
-  return false;
+  return Array.from(new Set(found));
 };
 
 export default function TimetableBuilderPage() {
@@ -685,34 +693,24 @@ export default function TimetableBuilderPage() {
                     const isAssigning = assigningId === sub.id;
                     const selectedVal = getAssignedTeacherValue(assigned);
 
-                    // Find explicit matching teachers across staff profiles
-                    const explicitMatches = teachers.filter(t => {
-                      const tSubs = getTeacherSubjectsArray(t);
-                      return isSubjectMatch(sub.subject_name, tSubs);
-                    });
-
-                    // 3-Rule Smart Filter:
+                    // STRICT FILTER: Only teachers whose profile subjects match sub.subject_name
                     const eligibleTeachers = teachers.filter(t => {
-                      const realId = t.id || t.user_id || t.user?.id;
-                      
-                      // Rule A: Keep currently assigned teacher
-                      if (realId && selectedVal && (realId === selectedVal || t.id === selectedVal || t.user_id === selectedVal)) {
-                        return true;
-                      }
-
-                      const tSubs = getTeacherSubjectsArray(t);
-
-                      // Rule B: If teacher has configured subjects, strictly match
-                      if (tSubs.length > 0) {
-                        return isSubjectMatch(sub.subject_name, tSubs);
-                      }
-
-                      // Rule C: If unconfigured, show ONLY IF no other teacher explicitly matches
-                      return explicitMatches.length === 0;
+                      const tSubjs = getTeacherSubjects(t);
+                      return tSubjs.some(ts => matchSubjects(sub.subject_name, ts));
                     });
+
+                    // Check if currently assigned teacher is in eligible list
+                    const isAssignedEligible = eligibleTeachers.some(t => {
+                      const realId = t.id || t.user_id || t.user?.id;
+                      return realId === selectedVal;
+                    });
+
+                    const assignedTeacherObj = !isAssignedEligible && selectedVal
+                      ? teachers.find(t => (t.id || t.user_id || t.user?.id) === selectedVal)
+                      : null;
 
                     return (
-                      <div key={sub.id} className={`flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-xl border transition-all ${assigned ? "border-emerald-800/50 bg-emerald-950/20" : "border-amber-800/40 bg-amber-950/10"}`}>
+                      <div key={sub.id} className={`flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-xl border transition-all ${assigned && isAssignedEligible ? "border-emerald-800/50 bg-emerald-950/20" : "border-amber-800/40 bg-amber-950/10"}`}>
                         <div className="flex items-center gap-3 flex-1 min-w-0">
                           <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${sub.color_code}25`, border: `1px solid ${sub.color_code}50` }}>
                             <BookOpen className="w-4 h-4" style={{ color: sub.color_code }} />
@@ -721,7 +719,7 @@ export default function TimetableBuilderPage() {
                             <p className="text-sm font-bold text-white truncate">{sub.subject_name}</p>
                             <p className="text-xs text-slate-400">{sub.periods_per_week} periods/week</p>
                           </div>
-                          {!assigned && (
+                          {(!assigned || !isAssignedEligible) && (
                             <span className="text-[10px] uppercase tracking-wide font-semibold text-amber-400 bg-amber-900/30 border border-amber-800/50 px-2 py-0.5 rounded">
                               Needed
                             </span>
@@ -735,11 +733,19 @@ export default function TimetableBuilderPage() {
                             </div>
                           ) : (
                             <select
-                              value={selectedVal}
+                              value={isAssignedEligible ? selectedVal : (assignedTeacherObj ? selectedVal : "")}
                               onChange={(e) => handleAssignTeacher(sub.id, e.target.value)}
-                              className={`w-full bg-[#0f172a] border text-sm rounded-lg px-3 py-2.5 outline-none transition-colors ${eligibleTeachers.length === 0 ? "border-amber-800/50 text-amber-400" : "border-slate-600 text-white focus:border-blue-500"}`}
+                              className={`w-full bg-[#0f172a] border text-sm rounded-lg px-3 py-2.5 outline-none transition-colors ${eligibleTeachers.length === 0 && !assignedTeacherObj ? "border-amber-800/50 text-amber-400" : "border-slate-600 text-white focus:border-blue-500"}`}
                             >
                               <option value="">-- Select Teacher --</option>
+
+                              {/* If a legacy assignment exists that doesn't match staff profile */}
+                              {assignedTeacherObj && (
+                                <option value={selectedVal}>
+                                  {teacherName(assignedTeacherObj)} (Profile Update Needed)
+                                </option>
+                              )}
+
                               {eligibleTeachers.map((t) => {
                                 const realTeacherId = t.id || t.user_id || t.user?.id;
                                 return (
@@ -748,8 +754,9 @@ export default function TimetableBuilderPage() {
                                   </option>
                                 );
                               })}
-                              {eligibleTeachers.length === 0 && (
-                                <option disabled value="none">No teacher configured for "{sub.subject_name}" in Staff profiles</option>
+
+                              {eligibleTeachers.length === 0 && !assignedTeacherObj && (
+                                <option disabled value="none">No teachers assigned to "{sub.subject_name}" in Staff profiles</option>
                               )}
                             </select>
                           )}
