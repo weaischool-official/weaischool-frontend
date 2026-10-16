@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -8,13 +8,23 @@ import Link from "next/link";
 import {
   ArrowLeft, User, Briefcase, GraduationCap, FileText, Users,
   Loader2, Edit, Save, X, Trash2, Phone, Mail, Calendar,
-  Wrench, BookOpen, Star, MapPin, Plus, Search, CheckCircle2,
+  Wrench, BookOpen, Star, MapPin, Plus, CheckCircle2, Search
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api/v1";
+
+// 🧠 MASTER SUBJECT LIST (Same as Timetable Page)
+const QUICK_SUBJECTS = [
+  "English", "Hindi", "Mathematics", "Science", "Social Science", 
+  "Computer", "Computer Science", "EVS", "General Knowledge", "Physical Education", 
+  "Art", "Physics", "Chemistry", "Biology", "History", "Geography", 
+  "Political Science", "Economics", "Music", "Sanskrit", "Accountancy", 
+  "Business Studies", "Psychology", "Philosophy", "Punjabi", "Painting", 
+  "Entrepreneurship"
+];
 
 function getAuthHeaders(tenantId: string): Record<string, string> {
   const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : "";
@@ -52,11 +62,10 @@ export default function StaffDetailPage() {
   const [activeTab, setActiveTab] = useState("basic");
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<Record<string, unknown>>({});
-  const [subjectInput, setSubjectInput] = useState("");
   
-  // Search state for class teacher dropdown
-  const [classSearch, setClassSearch] = useState("");
-  const [isClassDropdownOpen, setIsClassDropdownOpen] = useState(false);
+  // Subject Search States
+  const [subjectInput, setSubjectInput] = useState("");
+  const [apiSuggestions, setApiSuggestions] = useState<any[]>([]);
 
   useEffect(() => setTenantId(findTenantId(slug)), [slug]);
 
@@ -71,7 +80,7 @@ export default function StaffDetailPage() {
     enabled: !!tenantId && !!staffId,
   });
 
-  // 2. Fetch All Classes & Sections (For Class Teacher Dropdown)
+  // 2. Fetch All Classes & Sections (For Proper Grouped Dropdown)
   const { data: classesData } = useQuery({
     queryKey: ["classes", tenantId],
     queryFn: async () => {
@@ -82,16 +91,26 @@ export default function StaffDetailPage() {
     enabled: !!tenantId && isEditing,
   });
 
-  // 3. Fetch All Configured Subjects (For Strict Subject Selection)
-  const { data: allSubjectsData } = useQuery({
-    queryKey: ["all-class-subjects", tenantId],
-    queryFn: async () => {
-      const res = await fetch(`${API_BASE}/class-subjects`, { headers: getAuthHeaders(tenantId) });
-      if (!res.ok) return [];
-      return await res.json();
-    },
-    enabled: !!tenantId && isEditing,
-  });
+  // 3. Fetch API Suggestions as user types (Same logic as Timetable)
+  useEffect(() => {
+    if (subjectInput.trim() === "" || !tenantId) {
+      setApiSuggestions([]);
+      return;
+    }
+    const fetchSuggestions = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/class-subjects/suggestions?query=${subjectInput}`, {
+          headers: getAuthHeaders(tenantId)
+        });
+        const data = await res.json();
+        setApiSuggestions(data.suggestions || []);
+      } catch (error) {
+        setApiSuggestions([]);
+      }
+    };
+    const debounce = setTimeout(fetchSuggestions, 300);
+    return () => clearTimeout(debounce);
+  }, [subjectInput, tenantId]);
 
   // Derived Real Data
   const staff = useMemo(() => {
@@ -99,34 +118,6 @@ export default function StaffDetailPage() {
     const d = staffData as Record<string, unknown>;
     return (d?.data || d) as Record<string, unknown>;
   }, [staffData]);
-
-  // Generate Flat List of Classes (e.g., "Class 10 - Section A")
-  const flatClasses = useMemo(() => {
-    const list: string[] = [];
-    if (!classesData || !Array.isArray(classesData)) return list;
-    
-    classesData.forEach((c: any) => {
-      if (c.sections && Array.isArray(c.sections) && c.sections.length > 0) {
-        c.sections.forEach((s: any) => {
-          list.push(`${c.name} - ${s.name}`);
-        });
-      } else {
-        list.push(c.name);
-      }
-    });
-    return list;
-  }, [classesData]);
-
-  // Generate Unique Set of Available Subjects in School
-  const validSchoolSubjects = useMemo(() => {
-    const subjectSet = new Set<string>();
-    if (allSubjectsData && Array.isArray(allSubjectsData)) {
-      allSubjectsData.forEach((cs: any) => {
-        if (cs.subject_name) subjectSet.add(cs.subject_name.trim());
-      });
-    }
-    return Array.from(subjectSet);
-  }, [allSubjectsData]);
 
   const extras = (staff?.extras as Record<string, unknown>) || {};
   const category = String(editForm.category || extras.category || staff?.category || "administrative");
@@ -187,21 +178,13 @@ export default function StaffDetailPage() {
   const addSubject = (name: string) => {
     const clean = name.trim();
     if (!clean) return;
-    
-    // Check if subject is valid in school
-    const isValid = validSchoolSubjects.find(s => s.toLowerCase() === clean.toLowerCase());
-    if (!isValid) {
-      toast.error(`"${clean}" is not configured in school subjects yet.`);
-      return;
-    }
 
     if (subjectsList.some((s) => s.toLowerCase() === clean.toLowerCase())) {
       toast.error("Subject already added");
       return;
     }
 
-    // Add the exactly cased valid subject name
-    const next = [...subjectsList, isValid].join(", ");
+    const next = [...subjectsList, clean].join(", ");
     setField("subjects", next);
     setSubjectInput("");
   };
@@ -210,6 +193,22 @@ export default function StaffDetailPage() {
     const next = subjectsList.filter((s) => s !== name).join(", ");
     setField("subjects", next);
   };
+
+  // Generate Smart Options for Subject Dropdown
+  const getDisplayedChips = () => {
+    let chips: string[] = [];
+    if (subjectInput.trim().length > 0) {
+      const apiNames = apiSuggestions.map(s => s.name);
+      const quickNames = QUICK_SUBJECTS.filter(s => s.toLowerCase().includes(subjectInput.toLowerCase()));
+      // Combine and remove duplicates
+      chips = Array.from(new Set([...apiNames, ...quickNames]));
+    }
+    // Filter out already added ones
+    return chips.filter(c => !subjectsList.some(s => s.toLowerCase() === c.toLowerCase())).slice(0, 8);
+  };
+
+  const displayedSubjectChips = getDisplayedChips();
+  const exactMatchExists = displayedSubjectChips.some(c => c.toLowerCase() === subjectInput.toLowerCase().trim());
 
   const updateMutation = useMutation({
     mutationFn: async (form: Record<string, unknown>) => {
@@ -333,40 +332,26 @@ export default function StaffDetailPage() {
     { id: "address", label: "Address", icon: MapPin },
   ];
 
-  // Smart Strict Filter for Subjects
-  const filteredSuggestions = validSchoolSubjects.filter(
-    (s) =>
-      s.toLowerCase().includes(subjectInput.toLowerCase()) &&
-      !subjectsList.some((x) => x.toLowerCase() === s.toLowerCase())
-  ).slice(0, 10);
-  
-  // Smart Strict Filter for Classes
-  const filteredClasses = flatClasses.filter((c) => 
-    c.toLowerCase().includes(classSearch.toLowerCase())
-  );
-
-  const exactSubjectMatch = validSchoolSubjects.find(s => s.toLowerCase() === subjectInput.trim().toLowerCase());
-
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 text-slate-200">
       {/* HEADER */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-4">
           <Link href={`/school/${slug}/staff`}>
-            <Button variant="outline" size="sm" className="gap-2">
+            <Button variant="outline" size="sm" className="gap-2 border-slate-700 hover:bg-slate-800 text-slate-300">
               <ArrowLeft className="w-4 h-4" />
               Back
             </Button>
           </Link>
           <div>
-            <h1 className="text-2xl font-bold">{fullName}</h1>
+            <h1 className="text-2xl font-bold text-white">{fullName}</h1>
             <div className="flex items-center gap-2 mt-1 flex-wrap">
               <span className="text-sm text-blue-400 font-medium">{designation}</span>
               {staff.employee_id ? (
-                <span className="text-sm text-muted-foreground">• ID: {String(staff.employee_id)}</span>
+                <span className="text-sm text-slate-400">• ID: {String(staff.employee_id)}</span>
               ) : null}
               {viewExtras.is_class_teacher ? (
-                <span className="text-xs bg-yellow-500/10 text-yellow-400 border border-yellow-500/30 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                <span className="text-xs bg-yellow-900/30 text-yellow-400 border border-yellow-700/50 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
                   <Star className="w-3 h-3 fill-yellow-400" />
                   Class Teacher
                 </span>
@@ -384,6 +369,7 @@ export default function StaffDetailPage() {
                   setSubjectInput("");
                 }}
                 disabled={updateMutation.isPending}
+                className="border-slate-700 text-slate-300 hover:bg-slate-800"
               >
                 <X className="w-4 h-4 mr-2" />
                 Cancel
@@ -391,7 +377,7 @@ export default function StaffDetailPage() {
               <Button
                 onClick={() => updateMutation.mutate(editForm)}
                 disabled={updateMutation.isPending}
-                className="gap-2 bg-green-600 hover:bg-green-700"
+                className="gap-2 bg-green-600 hover:bg-green-700 text-white"
               >
                 {updateMutation.isPending ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -409,7 +395,7 @@ export default function StaffDetailPage() {
                   if (confirm("Remove this staff member?")) deleteMutation.mutate();
                 }}
                 disabled={deleteMutation.isPending}
-                className="gap-2 text-red-400 hover:text-red-300 border-red-500/30 hover:bg-red-500/10"
+                className="gap-2 text-red-400 hover:text-red-300 border-red-900/50 hover:bg-red-950/30"
               >
                 {deleteMutation.isPending ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -418,7 +404,7 @@ export default function StaffDetailPage() {
                 )}
                 Remove
               </Button>
-              <Button onClick={startEditing} className="gap-2 bg-blue-600 hover:bg-blue-700">
+              <Button onClick={startEditing} className="gap-2 bg-blue-600 hover:bg-blue-700 text-white">
                 <Edit className="w-4 h-4" />
                 Edit
               </Button>
@@ -428,10 +414,8 @@ export default function StaffDetailPage() {
       </div>
 
       {/* PROFILE CARD */}
-      <div
-        className={`bg-gradient-to-br ${categoryColors[viewCategory] || categoryColors.administrative} border rounded-xl p-6 flex items-center gap-6 flex-wrap`}
-      >
-        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-bold text-3xl shrink-0">
+      <div className={`bg-gradient-to-br ${categoryColors[viewCategory] || categoryColors.administrative} border rounded-xl p-6 flex items-center gap-6 flex-wrap`}>
+        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-white font-bold text-3xl shrink-0 shadow-lg">
           {initials}
         </div>
         <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -453,7 +437,7 @@ export default function StaffDetailPage() {
       </div>
 
       {/* TABS */}
-      <div className="border-b border-border">
+      <div className="border-b border-slate-800">
         <div className="flex gap-0 overflow-x-auto">
           {tabs.map((tab) => {
             const Icon = tab.icon;
@@ -462,7 +446,7 @@ export default function StaffDetailPage() {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-all whitespace-nowrap
-                  ${activeTab === tab.id ? "border-blue-500 text-blue-400" : "border-transparent text-muted-foreground hover:text-foreground hover:border-gray-600"}`}
+                  ${activeTab === tab.id ? "border-blue-500 text-blue-400 bg-blue-500/5" : "border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-700"}`}
               >
                 <Icon className="w-4 h-4" />
                 {tab.label}
@@ -473,7 +457,7 @@ export default function StaffDetailPage() {
       </div>
 
       {/* CONTENT */}
-      <div className="bg-card border border-border rounded-xl p-6">
+      <div className="bg-[#111827] border border-slate-800 rounded-xl p-6 shadow-sm">
         {/* ===== BASIC INFO ===== */}
         {activeTab === "basic" && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-5">
@@ -516,63 +500,80 @@ export default function StaffDetailPage() {
         {/* ===== TEACHING ===== */}
         {activeTab === "teaching" && (
           <div className="space-y-5">
-            {/* 1. STRICT SUBJECTS */}
-            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
-              <p className="text-sm font-medium mb-3 flex items-center gap-2">
-                <BookOpen className="w-4 h-4 text-green-400" />
-                Subjects Taught
+            {/* 1. MASTER SUBJECTS ADDER */}
+            <div className="bg-emerald-900/10 border border-emerald-800/30 rounded-xl p-5">
+              <p className="text-sm font-bold mb-4 flex items-center gap-2 text-emerald-400">
+                <BookOpen className="w-4 h-4" /> Subjects Configured for Teacher
               </p>
 
               {isEditing ? (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   <div className="flex flex-wrap gap-2 min-h-[32px]">
                     {subjectsList.length === 0 && (
-                      <p className="text-xs text-muted-foreground">No subjects added yet.</p>
+                      <p className="text-xs text-slate-500 italic">No subjects added yet.</p>
                     )}
                     {subjectsList.map((s) => (
-                      <span key={s} className="inline-flex items-center gap-1.5 text-sm bg-green-500/20 border border-green-500/40 text-green-300 pl-3 pr-1.5 py-1 rounded-full">
+                      <span key={s} className="inline-flex items-center gap-1.5 text-sm bg-emerald-900/40 border border-emerald-700/50 text-emerald-300 pl-3 pr-1.5 py-1.5 rounded-lg shadow-sm">
                         {s}
-                        <button type="button" onClick={() => removeSubject(s)} className="w-5 h-5 rounded-full hover:bg-red-500/30 flex items-center justify-center text-green-300 hover:text-red-300 transition-colors">
-                          <X className="w-3 h-3" />
+                        <button type="button" onClick={() => removeSubject(s)} className="w-5 h-5 rounded-md hover:bg-red-900/50 flex items-center justify-center text-emerald-300 hover:text-red-400 transition-colors">
+                          <X className="w-3.5 h-3.5" />
                         </button>
                       </span>
                     ))}
                   </div>
 
-                  <div className="relative max-w-sm">
+                  <div className="relative max-w-md">
                     <div className="flex gap-2">
-                      <Input
-                        value={subjectInput}
-                        onChange={(e) => setSubjectInput(e.target.value)}
-                        placeholder="Type to search school subjects..."
-                        className="bg-background"
-                      />
+                      <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+                        <Input
+                          value={subjectInput}
+                          onChange={(e) => setSubjectInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && subjectInput.trim()) {
+                              e.preventDefault();
+                              addSubject(subjectInput);
+                            }
+                          }}
+                          placeholder="Search any subject to assign..."
+                          className="bg-[#0f172a] border-slate-700 text-white pl-9 w-full"
+                        />
+                      </div>
                       <Button
                         type="button"
-                        size="sm"
-                        onClick={() => exactSubjectMatch && addSubject(exactSubjectMatch)}
-                        disabled={!exactSubjectMatch}
-                        className="gap-1 bg-green-600 hover:bg-green-700 shrink-0"
+                        onClick={() => addSubject(subjectInput)}
+                        disabled={!subjectInput.trim()}
+                        className="gap-1 bg-emerald-600 hover:bg-emerald-700 text-white shrink-0"
                       >
-                        <Plus className="w-4 h-4" />
-                        Add
+                        <Plus className="w-4 h-4" /> Add
                       </Button>
                     </div>
-                    {subjectInput.trim() && !exactSubjectMatch && filteredSuggestions.length === 0 && (
-                      <p className="text-xs text-red-400 mt-1">Subject not configured in school. Add it via Timetable setup first.</p>
+
+                    {/* Suggestions Box */}
+                    {subjectInput.trim() && displayedSubjectChips.length > 0 && (
+                      <div className="absolute z-20 mt-2 w-full bg-[#1e293b] border border-slate-700 rounded-xl shadow-2xl overflow-hidden p-2">
+                        <p className="text-[10px] uppercase font-bold text-slate-500 mb-2 px-2 tracking-wider">Suggestions</p>
+                        <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
+                          {displayedSubjectChips.map((s) => (
+                            <button
+                              key={s}
+                              type="button"
+                              onClick={() => addSubject(s)}
+                              className="text-left px-3 py-2 text-sm text-slate-300 hover:bg-blue-600/20 hover:text-blue-400 rounded-lg transition-colors flex items-center justify-between group"
+                            >
+                              {s}
+                              <Plus className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100" />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     )}
-                    {subjectInput.trim() && filteredSuggestions.length > 0 && (
-                      <div className="absolute z-20 mt-1 w-full bg-[#0f172a] border border-slate-700 rounded-lg shadow-xl max-h-40 overflow-y-auto">
-                        {filteredSuggestions.map((s) => (
-                          <button
-                            key={s}
-                            type="button"
-                            onClick={() => addSubject(s)}
-                            className="w-full text-left px-3 py-2 text-sm text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
-                          >
-                            {s}
-                          </button>
-                        ))}
+                    {subjectInput.trim() && displayedSubjectChips.length === 0 && !exactMatchExists && (
+                      <div className="absolute z-20 mt-2 w-full bg-[#1e293b] border border-slate-700 rounded-xl shadow-2xl p-3 flex justify-between items-center">
+                        <span className="text-sm text-slate-300">"{subjectInput}"</span>
+                        <Button type="button" size="sm" onClick={() => addSubject(subjectInput)} className="bg-slate-700 hover:bg-slate-600 h-7 text-xs">
+                          Add Custom
+                        </Button>
                       </div>
                     )}
                   </div>
@@ -582,51 +583,49 @@ export default function StaffDetailPage() {
                   {String(viewExtras.subjects || "")
                     .split(",").map((s) => s.trim()).filter(Boolean)
                     .map((s, i) => (
-                      <span key={i} className="text-sm bg-green-500/20 border border-green-500/40 text-green-300 px-3 py-1 rounded-full">
+                      <span key={i} className="text-sm bg-emerald-900/30 border border-emerald-800/50 text-emerald-300 px-3 py-1.5 rounded-lg shadow-sm">
                         {s}
                       </span>
                     ))}
-                  {!viewExtras.subjects && <p className="text-sm text-muted-foreground">No subjects assigned.</p>}
+                  {!viewExtras.subjects && <p className="text-sm text-slate-500 italic">No subjects assigned.</p>}
                 </div>
               )}
             </div>
 
             {/* 2. AUTO-SYNC CLASSES TAUGHT */}
-            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
-              <p className="text-sm font-medium mb-1 flex items-center gap-2">
-                <Users className="w-4 h-4 text-blue-400" />
-                Classes Taught
+            <div className="bg-blue-900/10 border border-blue-800/30 rounded-xl p-5">
+              <p className="text-sm font-bold mb-1 flex items-center gap-2 text-blue-400">
+                <Users className="w-4 h-4" /> Classes Currently Teaching
               </p>
-              <p className="text-xs text-slate-400 mb-3">
-                <CheckCircle2 className="w-3 h-3 inline mr-1 text-blue-400" />
-                Automatically synced when you assign this teacher in Timetable setup.
+              <p className="text-xs text-slate-400 mb-4">
+                <CheckCircle2 className="w-3.5 h-3.5 inline mr-1 text-blue-500" />
+                This is automatically updated when you assign this teacher in the Timetable Grid.
               </p>
               
               <div className="flex flex-wrap gap-2">
                 {String(viewExtras.classes_taught || "")
                   .split(",").map((c) => c.trim()).filter(Boolean)
                   .map((c, i) => (
-                    <span key={i} className="text-sm bg-blue-500/20 border border-blue-500/40 text-blue-300 px-3 py-1 rounded-full">
+                    <span key={i} className="text-sm bg-blue-900/30 border border-blue-800/50 text-blue-300 px-3 py-1.5 rounded-lg shadow-sm">
                       {c}
                     </span>
                   ))}
                 {!viewExtras.classes_taught && (
-                  <p className="text-sm text-slate-500 border border-dashed border-slate-700 px-3 py-1.5 rounded-md">
+                  <p className="text-sm text-slate-500 border border-dashed border-slate-700 px-4 py-2 rounded-lg bg-slate-800/30">
                     Not assigned to any classes yet
                   </p>
                 )}
               </div>
             </div>
 
-            {/* 3. CLASS TEACHER (SEARCHABLE DROPDOWN) */}
-            <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-4">
-              <p className="text-sm font-medium mb-3 flex items-center gap-2">
-                <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-                Class Teacher Setup
+            {/* 3. CLASS TEACHER SETUP (SMART NATIVE GROUPED DROPDOWN) */}
+            <div className="bg-yellow-900/10 border border-yellow-800/30 rounded-xl p-5">
+              <p className="text-sm font-bold mb-4 flex items-center gap-2 text-yellow-400">
+                <Star className="w-4 h-4 fill-yellow-500" /> Class Teacher Setup
               </p>
               
               {isEditing ? (
-                <div className="space-y-4">
+                <div className="space-y-5 bg-[#0f172a] p-4 rounded-xl border border-slate-800">
                   <div className="flex items-center gap-3">
                     <input
                       type="checkbox"
@@ -636,76 +635,57 @@ export default function StaffDetailPage() {
                         setField("is_class_teacher", e.target.checked);
                         if (!e.target.checked) setField("assigned_class", "");
                       }}
-                      className="w-4 h-4 rounded border-slate-600"
+                      className="w-5 h-5 rounded border-slate-600 bg-slate-800 text-yellow-500 focus:ring-yellow-500"
                     />
-                    <Label htmlFor="is_class_teacher">Make this staff a Class Teacher</Label>
+                    <Label htmlFor="is_class_teacher" className="text-sm font-semibold text-slate-200 cursor-pointer">
+                      Make this staff member a Class Teacher
+                    </Label>
                   </div>
                   
                   {Boolean(editForm.is_class_teacher) && (
-                    <div className="relative max-w-sm">
-                      <Label className="text-xs text-muted-foreground uppercase tracking-wider mb-1.5 block">Select Class</Label>
+                    <div className="max-w-sm ml-8">
+                      <Label className="text-xs text-slate-400 uppercase tracking-wider mb-2 block">Assign to Class & Section</Label>
                       
-                      <div className="relative">
-                        <div 
-                          className="w-full h-10 px-3 border border-input bg-background rounded-md flex items-center justify-between cursor-pointer"
-                          onClick={() => setIsClassDropdownOpen(!isClassDropdownOpen)}
-                        >
-                          <span className={editForm.assigned_class ? "text-foreground" : "text-muted-foreground"}>
-                            {String(editForm.assigned_class) || "-- Select Class & Section --"}
-                          </span>
-                        </div>
-
-                        {isClassDropdownOpen && (
-                          <div className="absolute z-30 mt-1 w-full bg-[#0f172a] border border-slate-700 rounded-lg shadow-xl overflow-hidden">
-                            <div className="p-2 border-b border-slate-700 relative">
-                              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                              <Input 
-                                autoFocus
-                                placeholder="Search classes..."
-                                value={classSearch}
-                                onChange={(e) => setClassSearch(e.target.value)}
-                                className="h-8 pl-8 text-sm bg-slate-900 border-slate-700"
-                              />
-                            </div>
-                            <div className="max-h-48 overflow-y-auto">
-                              {flatClasses.length === 0 && (
-                                <p className="text-xs text-slate-500 p-3 text-center">No classes found in school.</p>
-                              )}
-                              {filteredClasses.length === 0 && flatClasses.length > 0 && (
-                                <p className="text-xs text-slate-500 p-3 text-center">No match found.</p>
-                              )}
-                              {filteredClasses.map((cls) => (
-                                <button
-                                  key={cls}
-                                  type="button"
-                                  onClick={() => {
-                                    setField("assigned_class", cls);
-                                    setIsClassDropdownOpen(false);
-                                    setClassSearch("");
-                                  }}
-                                  className={`w-full text-left px-3 py-2 text-sm transition-colors ${
-                                    editForm.assigned_class === cls ? "bg-blue-600/20 text-blue-400" : "text-slate-300 hover:bg-slate-800 hover:text-white"
-                                  }`}
-                                >
-                                  {cls}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
+                      {/* NATIVE GROUPED SELECT - BULLETPROOF UI */}
+                      <select
+                        value={String(editForm.assigned_class || "")}
+                        onChange={(e) => setField("assigned_class", e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg px-3 py-2.5 outline-none focus:border-yellow-500 shadow-inner"
+                      >
+                        <option value="">-- Choose Class & Section --</option>
+                        {classesData?.map((cls: any) => {
+                          if (cls.sections && cls.sections.length > 0) {
+                            return (
+                              <optgroup key={cls.id} label={`📂 ${cls.name}`} className="bg-slate-800 text-slate-300 font-bold">
+                                {cls.sections.map((sec: any) => (
+                                  <option key={sec.id} value={`${cls.name} - ${sec.name}`} className="text-white font-normal bg-slate-900">
+                                    ↳ {cls.name} (Section {sec.name})
+                                  </option>
+                                ))}
+                              </optgroup>
+                            );
+                          } else {
+                            return (
+                              <option key={cls.id} value={cls.name} className="text-white bg-slate-900">
+                                {cls.name} (No Sections)
+                              </option>
+                            );
+                          }
+                        })}
+                      </select>
+                      <p className="text-[11px] text-slate-500 mt-2">Pick the exact class and section from the dropdown above.</p>
                     </div>
                   )}
                 </div>
               ) : viewExtras.is_class_teacher ? (
-                <div className="flex flex-col">
-                  <span className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Assigned Class</span>
-                  <p className="text-lg font-bold text-yellow-300">
+                <div className="flex flex-col bg-[#0f172a] p-4 rounded-xl border border-slate-800 w-max">
+                  <span className="text-xs text-slate-400 uppercase tracking-wider mb-1">Assigned To</span>
+                  <p className="text-lg font-bold text-yellow-400">
                     {String(viewExtras.assigned_class || "Class not specified")}
                   </p>
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground">Not assigned as a class teacher.</p>
+                <p className="text-sm text-slate-500 italic">Not assigned as a class teacher.</p>
               )}
             </div>
           </div>
@@ -743,10 +723,10 @@ export default function StaffDetailPage() {
 function InfoItem({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
   return (
     <div className="flex items-start gap-2">
-      <Icon className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+      <Icon className="w-4 h-4 text-slate-500 mt-0.5 shrink-0" />
       <div className="min-w-0">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="text-sm font-medium truncate">{value}</p>
+        <p className="text-[11px] uppercase tracking-wider font-semibold text-slate-500">{label}</p>
+        <p className="text-sm font-medium text-slate-200 truncate">{value}</p>
       </div>
     </div>
   );
@@ -772,14 +752,14 @@ function EditField({
   return (
     <div className="space-y-1.5">
       {label ? (
-        <Label className="text-xs text-muted-foreground uppercase tracking-wider">{label}</Label>
+        <Label className="text-xs text-slate-400 uppercase tracking-wider">{label}</Label>
       ) : null}
       {editing ? (
         options ? (
           <select
             value={value === "-" ? "" : value}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full h-10 rounded-lg border border-slate-700 bg-slate-900 px-3 text-sm text-white outline-none focus:border-blue-500"
           >
             <option value="">-- Select --</option>
             {options.map((o) => (
@@ -794,11 +774,11 @@ function EditField({
             value={value === "-" ? "" : value}
             onChange={(e) => onChange(e.target.value)}
             placeholder={placeholder || `Enter ${label.toLowerCase()}`}
-            className="bg-background"
+            className="bg-slate-900 border-slate-700 text-white focus:border-blue-500"
           />
         )
       ) : (
-        <p className="text-base text-foreground min-h-[28px]">{value || "—"}</p>
+        <p className="text-base text-slate-200 min-h-[28px] py-1 border-b border-transparent">{value || "—"}</p>
       )}
     </div>
   );
