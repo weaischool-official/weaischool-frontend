@@ -2,35 +2,48 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { useParams } from "next/navigation";
-import api from "@/lib/api";
-import { toast } from "sonner";
-import { 
-  BookOpen, Users, CalendarDays, Search, Plus, Minus,
-  Trash2, Loader2, CheckCircle2, AlertCircle, UserCheck, AlertTriangle
+import { api } from "@/lib/api";
+import { toast } from "react-hot-toast";
+import {
+  BookOpen,
+  Users,
+  CalendarDays,
+  Plus,
+  Minus,
+  Trash2,
+  Search,
+  CheckCircle2,
+  AlertCircle,
+  UserCheck,
+  Loader2,
+  AlertTriangle,
 } from "lucide-react";
 
 const QUICK_SUBJECTS = [
-  { name: "English", color: "#3B82F6" },
-  { name: "Hindi", color: "#10B981" },
-  { name: "Mathematics", color: "#F59E0B" },
+  { name: "Mathematics", color: "#3B82F6" },
+  { name: "English", color: "#10B981" },
   { name: "Science", color: "#8B5CF6" },
-  { name: "Social Science", color: "#EC4899" },
-  { name: "Computer", color: "#78350F" },
-  { name: "EVS", color: "#10B981" },
-  { name: "General Knowledge", color: "#6B7280" },
-  { name: "Physical Education", color: "#DC2626" },
-  { name: "Art", color: "#F472B6" },
-  { name: "Information Technology", color: "#06B6D4" },
+  { name: "Social Science", color: "#F59E0B" },
+  { name: "Hindi", color: "#EF4444" },
+  { name: "Computer", color: "#06B6D4" },
+  { name: "Physical Education", color: "#84CC16" },
+  { name: "General Knowledge", color: "#EC4899" },
+  { name: "Art & Craft", color: "#F97316" },
+  { name: "EVS", color: "#14B8A6" },
 ];
 
 const MAX_PERIODS = 30;
 
-// 1. Strict Discrete Synonym Group Matching Engine
-const matchSubjects = (classSubject: string, teacherSubject: string): boolean => {
-  if (!classSubject || !teacherSubject) return false;
+// Normalize subject names for precise matching
+const normalizeSubject = (str: string): string => {
+  if (!str) return "";
+  return str.toLowerCase().replace(/[^a-z0-9]/g, "");
+};
 
-  const normClass = String(classSubject).toLowerCase().replace(/[^a-z0-9]/g, '').trim();
-  const normTeacher = String(teacherSubject).toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+// Precise subject matching using discrete synonym groups
+const matchSubjects = (classSubjectName: string, teacherSubjectName: string): boolean => {
+  const normClass = normalizeSubject(classSubjectName);
+  const normTeacher = normalizeSubject(teacherSubjectName);
 
   if (!normClass || !normTeacher) return false;
 
@@ -41,7 +54,7 @@ const matchSubjects = (classSubject: string, teacherSubject: string): boolean =>
   const synonymGroups: string[][] = [
     ["mathematics", "maths", "math", "quantitative"],
     ["informationtechnology", "it", "computer", "computers", "computerscience", "cs", "ip"],
-    ["socialscience", "sst", "socialstudies", "history", "geography", "civics"],
+    ["socialscience", "sst", "socialstudies", "history", "geography", "civics", "politicalscience"],
     ["science", "physics", "chemistry", "biology"],
     ["physicaleducation", "pe", "sports", "pt"],
     ["generalknowledge", "gk"],
@@ -50,7 +63,7 @@ const matchSubjects = (classSubject: string, teacherSubject: string): boolean =>
     ["english", "eng"],
     ["hindi"],
     ["marathi"],
-    ["sanskrit"]
+    ["sanskrit"],
   ];
 
   for (const group of synonymGroups) {
@@ -62,7 +75,7 @@ const matchSubjects = (classSubject: string, teacherSubject: string): boolean =>
   return false;
 };
 
-// 2. Comprehensive Subject Extraction from Staff Profiles
+// Comprehensive Subject Extraction from Staff Profiles
 const getTeacherSubjects = (t: any): string[] => {
   if (!t) return [];
   const found: string[] = [];
@@ -70,30 +83,30 @@ const getTeacherSubjects = (t: any): string[] => {
   const extract = (val: any) => {
     if (!val) return;
     if (Array.isArray(val)) {
-      val.forEach(item => extract(item));
+      val.forEach((item) => extract(item));
       return;
     }
-    if (typeof val === 'string') {
+    if (typeof val === "string") {
       const trimmed = val.trim();
       if (!trimmed) return;
-      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
         try {
           const parsed = JSON.parse(trimmed);
           if (Array.isArray(parsed)) {
-            parsed.forEach(p => extract(p));
+            parsed.forEach((p) => extract(p));
             return;
           }
         } catch (e) {}
       }
-      trimmed.split(',').forEach(s => {
+      trimmed.split(",").forEach((s) => {
         const clean = s.trim();
         if (clean) found.push(clean);
       });
       return;
     }
-    if (typeof val === 'object') {
-      const name = val.name || val.subject_name || val.subject || '';
-      if (typeof name === 'string' && name.trim()) {
+    if (typeof val === "object") {
+      const name = val.name || val.subject_name || val.subject || "";
+      if (typeof name === "string" && name.trim()) {
         found.push(name.trim());
       }
     }
@@ -104,20 +117,28 @@ const getTeacherSubjects = (t: any): string[] => {
   extract(t.subject);
 
   let extras = t.extras;
-  if (typeof extras === 'string') {
-    try { extras = JSON.parse(extras); } catch (e) { extras = null; }
+  if (typeof extras === "string") {
+    try {
+      extras = JSON.parse(extras);
+    } catch (e) {
+      extras = null;
+    }
   }
-  if (extras && typeof extras === 'object') {
+  if (extras && typeof extras === "object") {
     extract(extras.subjects);
     extract(extras.subject);
     extract(extras.subjects_taught);
   }
 
   let extrasData = t.extras_data;
-  if (typeof extrasData === 'string') {
-    try { extrasData = JSON.parse(extrasData); } catch (e) { extrasData = null; }
+  if (typeof extrasData === "string") {
+    try {
+      extrasData = JSON.parse(extrasData);
+    } catch (e) {
+      extrasData = null;
+    }
   }
-  if (extrasData && typeof extrasData === 'object') {
+  if (extrasData && typeof extrasData === "object") {
     extract(extrasData.subjects);
     extract(extrasData.subject);
   }
@@ -125,10 +146,14 @@ const getTeacherSubjects = (t: any): string[] => {
   if (t.user) {
     extract(t.user.subjects);
     let uExtras = t.user.extras;
-    if (typeof uExtras === 'string') {
-      try { uExtras = JSON.parse(uExtras); } catch (e) { uExtras = null; }
+    if (typeof uExtras === "string") {
+      try {
+        uExtras = JSON.parse(uExtras);
+      } catch (e) {
+        uExtras = null;
+      }
     }
-    if (uExtras && typeof uExtras === 'object') {
+    if (uExtras && typeof uExtras === "object") {
       extract(uExtras.subjects);
     }
   }
@@ -163,8 +188,8 @@ export default function TimetableBuilderPage() {
   const [assigningId, setAssigningId] = useState<string | null>(null);
 
   const getSelectedContextName = () => {
-    const clsName = classes.find(c => c.id === selectedClassId)?.name || "";
-    const secName = sections.find(s => s.id === selectedSectionId)?.name || "";
+    const clsName = classes.find((c) => c.id === selectedClassId)?.name || "";
+    const secName = sections.find((s) => s.id === selectedSectionId)?.name || "";
     if (clsName && secName) return `Class ${clsName} (Section ${secName})`;
     if (clsName) return `Class ${clsName}`;
     return "...";
@@ -203,8 +228,12 @@ export default function TimetableBuilderPage() {
       return;
     }
 
-    const currentClass = classes.find(c => c.id === selectedClassId);
-    if (currentClass?.sections && Array.isArray(currentClass.sections) && currentClass.sections.length > 0) {
+    const currentClass = classes.find((c) => c.id === selectedClassId);
+    if (
+      currentClass?.sections &&
+      Array.isArray(currentClass.sections) &&
+      currentClass.sections.length > 0
+    ) {
       setSections(currentClass.sections);
       setSelectedSectionId(currentClass.sections[0].id);
       return;
@@ -264,14 +293,14 @@ export default function TimetableBuilderPage() {
         const res = await api.get(`/class-subjects/suggestions?query=${subjectQuery}`);
         setApiSuggestions(res.data.suggestions || []);
       } catch (error) {
-        setApiSuggestions([]); 
+        setApiSuggestions([]);
       }
     };
     const debounce = setTimeout(fetchSuggestions, 300);
     return () => clearTimeout(debounce);
   }, [subjectQuery]);
 
-  // 5. Load Teachers + Assignments + Workloads when Tab 2 opens
+  // 5. Load Teachers + Assignments + Workloads when Tab 2 opens (WITH FAIL-SAFE ENHANCED DETAIL FETCH)
   useEffect(() => {
     if (activeTab !== "teachers" || !selectedClassId) return;
 
@@ -281,17 +310,35 @@ export default function TimetableBuilderPage() {
         let teacherList: any[] = [];
         try {
           const r = await api.get("/staff?role=teacher");
-          teacherList = Array.isArray(r.data) ? r.data : (r.data?.items || r.data?.data || []);
+          teacherList = Array.isArray(r.data) ? r.data : r.data?.items || r.data?.data || [];
         } catch {
           try {
             const r2 = await api.get("/staff");
-            const all = Array.isArray(r2.data) ? r2.data : (r2.data?.items || []);
+            const all = Array.isArray(r2.data) ? r2.data : r2.data?.items || [];
             teacherList = all;
           } catch {
             teacherList = [];
           }
         }
-        setTeachers(teacherList);
+
+        // FAIL-SAFE ENHANCEMENT: For any teacher missing extras or subjects, fetch full profile (/staff/{id}) in parallel
+        const enrichedTeachers = await Promise.all(
+          teacherList.map(async (t) => {
+            const extracted = getTeacherSubjects(t);
+            if (extracted.length > 0) return t;
+
+            const staffId = t.id || t.user_id || t.user?.id;
+            if (!staffId) return t;
+            try {
+              const detailRes = await api.get(`/staff/${staffId}`);
+              return { ...t, ...detailRes.data, extras: detailRes.data?.extras || t.extras };
+            } catch {
+              return t;
+            }
+          })
+        );
+
+        setTeachers(enrichedTeachers);
 
         try {
           let aUrl = `/teacher-assignments?class_id=${selectedClassId}`;
@@ -325,22 +372,26 @@ export default function TimetableBuilderPage() {
     let chips: any[] = [];
     if (subjectQuery.trim().length > 0) {
       if (apiSuggestions.length > 0) {
-        chips = apiSuggestions.map(s => ({
-          name: s.name, color: s.suggested_color || "#3B82F6"
+        chips = apiSuggestions.map((s) => ({
+          name: s.name,
+          color: s.suggested_color || "#3B82F6",
         }));
       } else {
-        chips = QUICK_SUBJECTS.filter(s => s.name.toLowerCase().includes(subjectQuery.toLowerCase()));
+        chips = QUICK_SUBJECTS.filter((s) =>
+          s.name.toLowerCase().includes(subjectQuery.toLowerCase())
+        );
       }
     } else {
       chips = QUICK_SUBJECTS;
     }
-    const addedNames = classSubjects.map(cs => cs.subject_name.toLowerCase());
-    return chips.filter(chip => !addedNames.includes(chip.name.toLowerCase())).slice(0, 12);
+    const addedNames = classSubjects.map((cs) => cs.subject_name.toLowerCase());
+    return chips.filter((chip) => !addedNames.includes(chip.name.toLowerCase())).slice(0, 12);
   };
 
   const displayedChips = getDisplayedChips();
-  const exactMatchExists = displayedChips.some(c => c.name.toLowerCase() === subjectQuery.toLowerCase().trim()) || 
-                           classSubjects.some(cs => cs.subject_name.toLowerCase() === subjectQuery.toLowerCase().trim());
+  const exactMatchExists =
+    displayedChips.some((c) => c.name.toLowerCase() === subjectQuery.toLowerCase().trim()) ||
+    classSubjects.some((cs) => cs.subject_name.toLowerCase() === subjectQuery.toLowerCase().trim());
 
   const handleAddSubject = async (name: string, color: string = "#3B82F6", isCustom: boolean = false) => {
     if (!selectedClassId) {
@@ -356,11 +407,11 @@ export default function TimetableBuilderPage() {
         subject_name: name,
         periods_per_week: 5,
         color_code: color,
-        is_custom: isCustom
+        is_custom: isCustom,
       });
-      
-      setClassSubjects(prev => [...prev, res.data]);
-      setSubjectQuery(""); 
+
+      setClassSubjects((prev) => [...prev, res.data]);
+      setSubjectQuery("");
       toast.success(`${name} added!`);
     } catch (error: any) {
       const msg = error.response?.data?.detail || error.message || "Failed to add subject";
@@ -377,10 +428,12 @@ export default function TimetableBuilderPage() {
     setUpdatingId(subjectId);
     try {
       await api.patch(`/class-subjects/${subjectId}`, {
-        periods_per_week: newPeriods
+        periods_per_week: newPeriods,
       });
 
-      setClassSubjects(prev => prev.map(s => s.id === subjectId ? { ...s, periods_per_week: newPeriods } : s));
+      setClassSubjects((prev) =>
+        prev.map((s) => (s.id === subjectId ? { ...s, periods_per_week: newPeriods } : s))
+      );
       toast.success(`Updated to ${newPeriods} periods/week`);
     } catch (error: any) {
       toast.error("Failed to update periods");
@@ -393,11 +446,11 @@ export default function TimetableBuilderPage() {
     if (!confirm(`Remove ${name}?`)) return;
     try {
       await api.delete(`/class-subjects/${subjectId}`);
-      setClassSubjects(prev => prev.filter(s => s.id !== subjectId));
+      setClassSubjects((prev) => prev.filter((s) => s.id !== subjectId));
       toast.success("Subject removed");
     } catch (error: any) {
       const detail = error.response?.data?.detail;
-      toast.error(typeof detail === 'string' ? detail : "Failed to remove");
+      toast.error(typeof detail === "string" ? detail : "Failed to remove");
     }
   };
 
@@ -411,7 +464,7 @@ export default function TimetableBuilderPage() {
         teacher_id: teacherId,
       });
 
-      setAssignments(prev => ({
+      setAssignments((prev) => ({
         ...prev,
         [classSubjectId]: res.data,
       }));
@@ -422,7 +475,9 @@ export default function TimetableBuilderPage() {
       } catch {}
 
       if (res.data?.is_overloaded) {
-        toast.warning(`${res.data.teacher_name} is now at ${res.data.current_workload}/30 periods — overloaded, but saved.`);
+        toast.warning(
+          `${res.data.teacher_name} is now at ${res.data.current_workload}/30 periods - overloaded, but saved.`
+        );
       } else {
         toast.success(`Assigned to ${res.data.teacher_name}`);
       }
@@ -439,12 +494,13 @@ export default function TimetableBuilderPage() {
     const aTeacherId = assignedObj.teacher_id;
     const aStaffId = assignedObj.staff_id;
 
-    const match = teachers.find(t => 
-      t.id === aTeacherId || 
-      t.user_id === aTeacherId || 
-      t.user?.id === aTeacherId ||
-      t.id === aStaffId ||
-      t.user_id === aStaffId
+    const match = teachers.find(
+      (t) =>
+        t.id === aTeacherId ||
+        t.user_id === aTeacherId ||
+        t.user?.id === aTeacherId ||
+        t.id === aStaffId ||
+        t.user_id === aStaffId
     );
 
     if (match) {
@@ -454,29 +510,51 @@ export default function TimetableBuilderPage() {
   };
 
   const assignedCount = useMemo(() => {
-    return classSubjects.filter(s => assignments[s.id]?.teacher_id).length;
+    return classSubjects.filter((s) => assignments[s.id]?.teacher_id).length;
   }, [classSubjects, assignments]);
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6 text-slate-200">
-      
       {/* HEADER */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white tracking-tight">Smart Timetable Builder</h1>
-          <p className="text-slate-400 text-sm mt-1">Setup section-wise subjects, assign teachers, and build schedules.</p>
+          <p className="text-slate-400 text-sm mt-1">
+            Setup section-wise subjects, assign teachers, and build schedules.
+          </p>
         </div>
       </div>
 
       {/* 3-TAB NAVIGATION */}
       <div className="flex bg-[#111827] border border-slate-800 p-1.5 rounded-xl w-fit shadow-sm overflow-x-auto">
-        <button onClick={() => setActiveTab("subjects")} className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all whitespace-nowrap ${activeTab === "subjects" ? "bg-blue-600 text-white shadow-md shadow-blue-900/30" : "text-slate-400 hover:text-white"}`}>
+        <button
+          onClick={() => setActiveTab("subjects")}
+          className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all whitespace-nowrap ${
+            activeTab === "subjects"
+              ? "bg-blue-600 text-white shadow-md shadow-blue-900/30"
+              : "text-slate-400 hover:text-white"
+          }`}
+        >
           <BookOpen className="w-4 h-4" /> 1. Subjects Setup
         </button>
-        <button onClick={() => setActiveTab("teachers")} className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all whitespace-nowrap ${activeTab === "teachers" ? "bg-blue-600 text-white shadow-md shadow-blue-900/30" : "text-slate-400 hover:text-white"}`}>
+        <button
+          onClick={() => setActiveTab("teachers")}
+          className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all whitespace-nowrap ${
+            activeTab === "teachers"
+              ? "bg-blue-600 text-white shadow-md shadow-blue-900/30"
+              : "text-slate-400 hover:text-white"
+          }`}
+        >
           <Users className="w-4 h-4" /> 2. Assign Teachers
         </button>
-        <button onClick={() => setActiveTab("timetable")} className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all whitespace-nowrap ${activeTab === "timetable" ? "bg-blue-600 text-white shadow-md shadow-blue-900/30" : "text-slate-400 hover:text-white"}`}>
+        <button
+          onClick={() => setActiveTab("timetable")}
+          className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all whitespace-nowrap ${
+            activeTab === "timetable"
+              ? "bg-blue-600 text-white shadow-md shadow-blue-900/30"
+              : "text-slate-400 hover:text-white"
+          }`}
+        >
           <CalendarDays className="w-4 h-4" /> 3. Build Grid
         </button>
       </div>
@@ -484,15 +562,21 @@ export default function TimetableBuilderPage() {
       {/* GLOBAL SELECTORS */}
       <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 flex flex-wrap items-center gap-6 shadow-sm">
         <div className="flex-1 min-w-[200px] max-w-xs">
-          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">Select Class</label>
+          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
+            Select Class
+          </label>
           <select
             value={selectedClassId}
             onChange={(e) => setSelectedClassId(e.target.value)}
             className="w-full bg-[#0f172a] border border-slate-700 text-white rounded-lg px-3 py-2.5 outline-none focus:border-blue-500"
           >
-            <option value="" disabled className="text-slate-500">-- Choose Class --</option>
+            <option value="" disabled className="text-slate-500">
+              -- Choose Class --
+            </option>
             {classes.map((cls) => (
-              <option key={cls.id} value={cls.id}>{cls.name}</option>
+              <option key={cls.id} value={cls.id}>
+                {cls.name}
+              </option>
             ))}
           </select>
         </div>
@@ -512,7 +596,9 @@ export default function TimetableBuilderPage() {
               <option value="">No sections found</option>
             ) : (
               sections.map((sec) => (
-                <option key={sec.id} value={sec.id}>{sec.name}</option>
+                <option key={sec.id} value={sec.id}>
+                  {sec.name}
+                </option>
               ))
             )}
           </select>
@@ -591,7 +677,7 @@ export default function TimetableBuilderPage() {
             <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 shadow-sm min-h-[400px]">
               <h3 className="font-bold text-white flex items-center justify-between mb-5">
                 <span className="flex items-center gap-2">
-                  <BookOpen className="w-4 h-4 text-blue-400" /> 
+                  <BookOpen className="w-4 h-4 text-blue-400" />
                   Configured Subjects for {getSelectedContextName()}
                 </span>
                 <span className="text-xs font-semibold bg-slate-800 text-slate-300 px-3 py-1 rounded-full border border-slate-700">
@@ -600,18 +686,31 @@ export default function TimetableBuilderPage() {
               </h3>
 
               {isLoading ? (
-                <div className="flex justify-center py-20 text-slate-400"><Loader2 className="w-6 h-6 animate-spin" /></div>
+                <div className="flex justify-center py-20 text-slate-400">
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                </div>
               ) : classSubjects.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-slate-500 border-2 border-dashed border-slate-800 rounded-xl">
-                  <p className="text-sm font-medium text-slate-300">No subjects configured for this section</p>
+                  <p className="text-sm font-medium text-slate-300">
+                    No subjects configured for this section
+                  </p>
                   <p className="text-xs mt-1">Click a chip on the left to add subjects.</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {classSubjects.map((sub) => (
-                    <div key={sub.id} className="group flex items-center justify-between p-3.5 rounded-xl border border-slate-700/50 bg-slate-800/40 hover:bg-slate-800 transition-all">
+                    <div
+                      key={sub.id}
+                      className="group flex items-center justify-between p-3.5 rounded-xl border border-slate-700/50 bg-slate-800/40 hover:bg-slate-800 transition-all"
+                    >
                       <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-lg flex items-center justify-center shadow-inner" style={{ backgroundColor: `${sub.color_code}20`, border: `1px solid ${sub.color_code}40` }}>
+                        <div
+                          className="w-9 h-9 rounded-lg flex items-center justify-center shadow-inner"
+                          style={{
+                            backgroundColor: `${sub.color_code}20`,
+                            border: `1px solid ${sub.color_code}40`,
+                          }}
+                        >
                           <BookOpen className="w-4 h-4" style={{ color: sub.color_code }} />
                         </div>
                         <div>
@@ -642,8 +741,8 @@ export default function TimetableBuilderPage() {
                         </div>
                       </div>
 
-                      <button 
-                        onClick={() => handleDeleteSubject(sub.id, sub.subject_name)} 
+                      <button
+                        onClick={() => handleDeleteSubject(sub.id, sub.subject_name)}
                         className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-950/30 rounded-lg transition-all"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -665,22 +764,33 @@ export default function TimetableBuilderPage() {
               <div className="flex items-center justify-between mb-5">
                 <h3 className="font-bold text-white flex items-center gap-2">
                   <UserCheck className="w-4 h-4 text-blue-400" />
-                  Assign Teachers — {getSelectedContextName()}
+                  Assign Teachers - {getSelectedContextName()}
                 </h3>
-                <span className={`text-xs font-semibold px-3 py-1 rounded-full border ${classSubjects.length > 0 && assignedCount === classSubjects.length ? "bg-emerald-900/30 text-emerald-300 border-emerald-800" : "bg-slate-800 text-slate-300 border-slate-700"}`}>
+                <span
+                  className={`text-xs font-semibold px-3 py-1 rounded-full border ${
+                    classSubjects.length > 0 && assignedCount === classSubjects.length
+                      ? "bg-emerald-900/30 text-emerald-300 border-emerald-800"
+                      : "bg-slate-800 text-slate-300 border-slate-700"
+                  }`}
+                >
                   {assignedCount} / {classSubjects.length} assigned
                 </span>
               </div>
 
               {isLoading || isLoadingTeachers ? (
-                <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-slate-400" /></div>
+                <div className="flex justify-center py-20">
+                  <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+                </div>
               ) : classSubjects.length === 0 ? (
                 <div className="flex flex-col items-center py-16 text-slate-500 border-2 border-dashed border-slate-800 rounded-xl">
                   <BookOpen className="w-10 h-10 mb-3 text-slate-600" />
                   <p className="text-sm text-slate-300 font-medium">No subjects in this section</p>
                   <p className="text-xs mt-1 mb-4">Add subjects first in Tab 1</p>
-                  <button onClick={() => setActiveTab("subjects")} className="text-blue-400 text-sm hover:underline">
-                    ← Go to Subjects Setup
+                  <button
+                    onClick={() => setActiveTab("subjects")}
+                    className="text-blue-400 text-sm hover:underline"
+                  >
+                    Go to Subjects Setup
                   </button>
                 </div>
               ) : teachers.length === 0 ? (
@@ -697,30 +807,48 @@ export default function TimetableBuilderPage() {
                     const selectedVal = getAssignedTeacherValue(assigned);
 
                     // STRICT FILTER: Only teachers whose profile subjects match sub.subject_name
-                    const eligibleTeachers = teachers.filter(t => {
+                    const eligibleTeachers = teachers.filter((t) => {
                       const tSubjs = getTeacherSubjects(t);
-                      return tSubjs.some(ts => matchSubjects(sub.subject_name, ts));
+                      return tSubjs.some((ts) => matchSubjects(sub.subject_name, ts));
                     });
 
                     // Check if currently assigned teacher is in eligible list
-                    const isAssignedEligible = eligibleTeachers.some(t => {
+                    const isAssignedEligible = eligibleTeachers.some((t) => {
                       const realId = t.id || t.user_id || t.user?.id;
                       return realId === selectedVal;
                     });
 
-                    const assignedTeacherObj = !isAssignedEligible && selectedVal
-                      ? teachers.find(t => (t.id || t.user_id || t.user?.id) === selectedVal)
-                      : null;
+                    const assignedTeacherObj =
+                      !isAssignedEligible && selectedVal
+                        ? teachers.find((t) => (t.id || t.user_id || t.user?.id) === selectedVal)
+                        : null;
 
                     return (
-                      <div key={sub.id} className={`flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-xl border transition-all ${assigned && isAssignedEligible ? "border-emerald-800/50 bg-emerald-950/20" : "border-amber-800/40 bg-amber-950/10"}`}>
+                      <div
+                        key={sub.id}
+                        className={`flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-xl border transition-all ${
+                          assigned && isAssignedEligible
+                            ? "border-emerald-800/50 bg-emerald-950/20"
+                            : "border-amber-800/40 bg-amber-950/10"
+                        }`}
+                      >
                         <div className="flex items-center gap-3 flex-1 min-w-0">
-                          <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${sub.color_code}25`, border: `1px solid ${sub.color_code}50` }}>
+                          <div
+                            className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
+                            style={{
+                              backgroundColor: `${sub.color_code}25`,
+                              border: `1px solid ${sub.color_code}50`,
+                            }}
+                          >
                             <BookOpen className="w-4 h-4" style={{ color: sub.color_code }} />
                           </div>
                           <div className="min-w-0">
-                            <p className="text-sm font-bold text-white truncate">{sub.subject_name}</p>
-                            <p className="text-xs text-slate-400">{sub.periods_per_week} periods/week</p>
+                            <p className="text-sm font-bold text-white truncate">
+                              {sub.subject_name}
+                            </p>
+                            <p className="text-xs text-slate-400">
+                              {sub.periods_per_week} periods/week
+                            </p>
                           </div>
                           {(!assigned || !isAssignedEligible) && (
                             <span className="text-[10px] uppercase tracking-wide font-semibold text-amber-400 bg-amber-900/30 border border-amber-800/50 px-2 py-0.5 rounded">
@@ -736,9 +864,19 @@ export default function TimetableBuilderPage() {
                             </div>
                           ) : (
                             <select
-                              value={isAssignedEligible ? selectedVal : (assignedTeacherObj ? selectedVal : "")}
+                              value={
+                                isAssignedEligible
+                                  ? selectedVal
+                                  : assignedTeacherObj
+                                  ? selectedVal
+                                  : ""
+                              }
                               onChange={(e) => handleAssignTeacher(sub.id, e.target.value)}
-                              className={`w-full bg-[#0f172a] border text-sm rounded-lg px-3 py-2.5 outline-none transition-colors ${eligibleTeachers.length === 0 && !assignedTeacherObj ? "border-amber-800/50 text-amber-400" : "border-slate-600 text-white focus:border-blue-500"}`}
+                              className={`w-full bg-[#0f172a] border text-sm rounded-lg px-3 py-2.5 outline-none transition-colors ${
+                                eligibleTeachers.length === 0 && !assignedTeacherObj
+                                  ? "border-amber-800/50 text-amber-400"
+                                  : "border-slate-600 text-white focus:border-blue-500"
+                              }`}
                             >
                               <option value="">-- Select Teacher --</option>
 
@@ -759,7 +897,9 @@ export default function TimetableBuilderPage() {
                               })}
 
                               {eligibleTeachers.length === 0 && !assignedTeacherObj && (
-                                <option disabled value="none">No teacher profile configured for "{sub.subject_name}"</option>
+                                <option disabled value="none">
+                                  No teacher profile configured for "{sub.subject_name}"
+                                </option>
                               )}
                             </select>
                           )}
@@ -778,10 +918,14 @@ export default function TimetableBuilderPage() {
               <h3 className="font-bold text-white flex items-center gap-2 mb-1">
                 <Users className="w-4 h-4 text-blue-400" /> Teacher Workload & Profiles
               </h3>
-              <p className="text-xs text-slate-500 mb-4">Max {MAX_PERIODS} periods/week · Configured Subjects</p>
+              <p className="text-xs text-slate-500 mb-4">
+                Max {MAX_PERIODS} periods/week · Configured Subjects
+              </p>
 
               {isLoadingTeachers ? (
-                <div className="flex justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-slate-400" /></div>
+                <div className="flex justify-center py-10">
+                  <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+                </div>
               ) : workloads.length === 0 && teachers.length === 0 ? (
                 <p className="text-sm text-slate-500 text-center py-8">No teacher data</p>
               ) : (
@@ -789,30 +933,50 @@ export default function TimetableBuilderPage() {
                   {teachers.map((t) => {
                     const tid = t.user_id || t.user?.id || t.id;
                     const sid = t.id;
-                    const w = workloads.find((item: any) => 
-                      item.teacher_id === tid || 
-                      item.staff_id === sid || 
-                      item.teacher_id === sid
+                    const w = workloads.find(
+                      (item: any) =>
+                        item.teacher_id === tid ||
+                        item.staff_id === sid ||
+                        item.teacher_id === sid
                     ) || {
                       teacher_id: tid,
                       teacher_name: teacherName(t),
                       total_periods: 0,
-                      max_periods: MAX_PERIODS
+                      max_periods: MAX_PERIODS,
                     };
 
                     const periods = w.total_periods || 0;
                     const maxP = w.max_periods || MAX_PERIODS;
                     const pct = Math.min(100, Math.round((periods / maxP) * 100));
                     const isOver = periods > maxP;
-                    const barColor = isOver ? "bg-red-500" : pct >= 80 ? "bg-amber-500" : pct >= 50 ? "bg-blue-500" : "bg-emerald-500";
+                    const barColor = isOver
+                      ? "bg-red-500"
+                      : pct >= 80
+                      ? "bg-amber-500"
+                      : pct >= 50
+                      ? "bg-blue-500"
+                      : "bg-emerald-500";
 
                     const tSubjects = getTeacherSubjects(t);
 
                     return (
-                      <div key={t.id} className={`p-3 rounded-xl border ${isOver ? "border-red-800/50 bg-red-950/20" : "border-slate-700/50 bg-slate-800/30"}`}>
+                      <div
+                        key={t.id}
+                        className={`p-3 rounded-xl border ${
+                          isOver
+                            ? "border-red-800/50 bg-red-950/20"
+                            : "border-slate-700/50 bg-slate-800/30"
+                        }`}
+                      >
                         <div className="flex items-center justify-between mb-1">
-                          <p className="text-sm font-bold text-white truncate pr-2">{teacherName(t)}</p>
-                          <span className={`text-xs font-bold shrink-0 ${isOver ? "text-red-400" : "text-slate-400"}`}>
+                          <p className="text-sm font-bold text-white truncate pr-2">
+                            {teacherName(t)}
+                          </p>
+                          <span
+                            className={`text-xs font-bold shrink-0 ${
+                              isOver ? "text-red-400" : "text-slate-400"
+                            }`}
+                          >
                             {periods}/{maxP}
                           </span>
                         </div>
@@ -831,7 +995,10 @@ export default function TimetableBuilderPage() {
                         </div>
 
                         <div className="h-1.5 bg-slate-900 rounded-full overflow-hidden">
-                          <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                          <div
+                            className={`h-full rounded-full transition-all ${barColor}`}
+                            style={{ width: `${Math.min(pct, 100)}%` }}
+                          />
                         </div>
 
                         {isOver && (
@@ -857,8 +1024,11 @@ export default function TimetableBuilderPage() {
           <p className="text-slate-500 text-sm mt-2 max-w-md mx-auto">
             After subjects + teachers are set, you will build the weekly grid with clash detection here.
           </p>
-          <button onClick={() => setActiveTab("teachers")} className="mt-5 text-blue-400 font-medium text-sm hover:underline">
-            ← Back to Assign Teachers
+          <button
+            onClick={() => setActiveTab("teachers")}
+            className="mt-5 text-blue-400 font-medium text-sm hover:underline"
+          >
+            Back to Assign Teachers
           </button>
         </div>
       )}
