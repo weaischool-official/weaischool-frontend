@@ -20,6 +20,7 @@ const QUICK_SUBJECTS = [
   { name: "General Knowledge", color: "#6B7280" },
   { name: "Physical Education", color: "#DC2626" },
   { name: "Art", color: "#F472B6" },
+  { name: "Information Technology", color: "#06B6D4" },
 ];
 
 const MAX_PERIODS = 30;
@@ -68,26 +69,58 @@ export default function TimetableBuilderPage() {
     return n || t.email || "Teacher";
   };
 
-  // ✅ ULTRA-SAFE & SMART HELPER: Extract subjects from staff profile (checks extras.subjects too!)
-  const getTeacherSubjectsArray = (t: any) => {
+  // ✅ ULTRA-SAFE & SMART HELPER: Extract subjects from staff profile (checks extras.subjects properly!)
+  const getTeacherSubjectsArray = (t: any): string[] => {
     if (!t) return [];
     
-    // Check root level, extras, extras_data, subjects_taught
-    let rawSubjects = t.subjects || t.extras?.subjects || t.extras_data?.subjects || t.subjects_taught || "";
-    
-    if (Array.isArray(rawSubjects)) {
-      return rawSubjects.map((s: any) => {
-        if (typeof s === 'string') return s.toLowerCase().trim();
-        if (s && typeof s === 'object' && (s.name || s.subject_name)) return String(s.name || s.subject_name).toLowerCase().trim();
-        return "";
-      }).filter(Boolean);
+    const allSubjs = new Set<string>();
+
+    const addSource = (src: any) => {
+      if (!src) return;
+      if (Array.isArray(src)) {
+        src.forEach((s: any) => {
+          if (typeof s === 'string') allSubjs.add(s.toLowerCase().trim());
+          else if (s && typeof s === 'object' && (s.name || s.subject_name)) {
+            allSubjs.add(String(s.name || s.subject_name).toLowerCase().trim());
+          }
+        });
+      } else if (typeof src === 'string') {
+        try {
+          if (src.trim().startsWith('[')) {
+            const parsed = JSON.parse(src);
+            if (Array.isArray(parsed)) parsed.forEach(s => allSubjs.add(String(s).toLowerCase().trim()));
+          } else {
+            src.split(',').forEach(s => allSubjs.add(s.toLowerCase().trim()));
+          }
+        } catch {
+          src.split(',').forEach(s => allSubjs.add(s.toLowerCase().trim()));
+        }
+      }
+    };
+
+    // 1. Root level arrays
+    addSource(t.subjects);
+    addSource(t.subjects_taught);
+
+    // 2. Extras JSON object parsing (sometimes comes as string from Postgres)
+    let extrasObj = t.extras;
+    if (typeof extrasObj === 'string') {
+      try { extrasObj = JSON.parse(extrasObj); } catch(e) { extrasObj = {}; }
     }
-    
-    if (typeof rawSubjects === 'string') {
-      return rawSubjects.split(',').map(s => s.toLowerCase().trim()).filter(Boolean);
+    if (extrasObj && extrasObj.subjects) {
+      addSource(extrasObj.subjects);
     }
-    
-    return [];
+
+    // 3. Extras data JSON object parsing
+    let extrasDataObj = t.extras_data;
+    if (typeof extrasDataObj === 'string') {
+      try { extrasDataObj = JSON.parse(extrasDataObj); } catch(e) { extrasDataObj = {}; }
+    }
+    if (extrasDataObj && extrasDataObj.subjects) {
+      addSource(extrasDataObj.subjects);
+    }
+
+    return Array.from(allSubjs).filter(Boolean);
   };
 
   // 1. Fetch Classes on mount
@@ -608,25 +641,16 @@ export default function TimetableBuilderPage() {
                     const selectedVal = getAssignedTeacherValue(assigned);
                     const targetSubName = sub.subject_name.toLowerCase().trim();
 
-                    // ✅ BULLETPROOF SMART FILTER LOGIC
+                    // ✅ STRICT FILTERING: Only exact matches, NO fallback!
                     const eligibleTeachers = teachers.filter(t => {
                       const realId = t.id || t.user_id || t.user?.id;
                       
-                      // Condition 1: If teacher is ALREADY assigned to this subject, keep them in dropdown!
+                      // 1. If teacher is ALREADY assigned to this subject, keep them in dropdown
                       if (realId && selectedVal && realId === selectedVal) return true;
                       
-                      // Condition 2: Extract teacher's profile subjects
+                      // 2. Exact match check
                       const tSubs = getTeacherSubjectsArray(t);
-                      
-                      // Condition 3: If teacher has NO subjects configured in staff profile at all -> show as fallback
-                      if (tSubs.length === 0) return true;
-                      
-                      // Condition 4: Smart match target subject name
-                      return tSubs.some(s => 
-                        s === targetSubName || 
-                        s.includes(targetSubName) || 
-                        targetSubName.includes(s)
-                      );
+                      return tSubs.includes(targetSubName);
                     });
 
                     return (
