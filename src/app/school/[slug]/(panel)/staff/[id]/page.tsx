@@ -16,7 +16,6 @@ import { Label } from "@/components/ui/label";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api/v1";
 
-// 🧠 MASTER SUBJECT LIST (Same as Timetable Page)
 const QUICK_SUBJECTS = [
   "English", "Hindi", "Mathematics", "Science", "Social Science", 
   "Computer", "Computer Science", "EVS", "General Knowledge", "Physical Education", 
@@ -63,7 +62,6 @@ export default function StaffDetailPage() {
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<Record<string, unknown>>({});
   
-  // Subject Search States
   const [subjectInput, setSubjectInput] = useState("");
   const [apiSuggestions, setApiSuggestions] = useState<any[]>([]);
 
@@ -80,7 +78,7 @@ export default function StaffDetailPage() {
     enabled: !!tenantId && !!staffId,
   });
 
-  // 2. Fetch All Classes & Sections (For Proper Grouped Dropdown)
+  // 2. Fetch All Classes & Sections
   const { data: classesData } = useQuery({
     queryKey: ["classes", tenantId],
     queryFn: async () => {
@@ -91,7 +89,7 @@ export default function StaffDetailPage() {
     enabled: !!tenantId && isEditing,
   });
 
-  // 3. Fetch API Suggestions as user types (Same logic as Timetable)
+  // 3. Fetch API Suggestions as user types
   useEffect(() => {
     if (subjectInput.trim() === "" || !tenantId) {
       setApiSuggestions([]);
@@ -112,7 +110,6 @@ export default function StaffDetailPage() {
     return () => clearTimeout(debounce);
   }, [subjectInput, tenantId]);
 
-  // Derived Real Data
   const staff = useMemo(() => {
     if (!staffData) return null;
     const d = staffData as Record<string, unknown>;
@@ -124,7 +121,6 @@ export default function StaffDetailPage() {
   const isTeaching = category === "teaching" || String(editForm.role || staff?.role || "").toLowerCase() === "teacher";
   const isSupport = category === "support";
 
-  // Start editing
   const startEditing = () => {
     if (!staff) return;
     const ex = (staff.extras as Record<string, unknown>) || {};
@@ -169,7 +165,6 @@ export default function StaffDetailPage() {
     setEditForm((prev) => ({ ...prev, [key]: value }));
   };
 
-  // Subjects as array helpers
   const subjectsList: string[] = useMemo(() => {
     const raw = String(editForm.subjects || "");
     return raw.split(",").map((s) => s.trim()).filter(Boolean);
@@ -194,22 +189,20 @@ export default function StaffDetailPage() {
     setField("subjects", next);
   };
 
-  // Generate Smart Options for Subject Dropdown
   const getDisplayedChips = () => {
     let chips: string[] = [];
     if (subjectInput.trim().length > 0) {
       const apiNames = apiSuggestions.map(s => s.name);
       const quickNames = QUICK_SUBJECTS.filter(s => s.toLowerCase().includes(subjectInput.toLowerCase()));
-      // Combine and remove duplicates
       chips = Array.from(new Set([...apiNames, ...quickNames]));
     }
-    // Filter out already added ones
     return chips.filter(c => !subjectsList.some(s => s.toLowerCase() === c.toLowerCase())).slice(0, 8);
   };
 
   const displayedSubjectChips = getDisplayedChips();
   const exactMatchExists = displayedSubjectChips.some(c => c.toLowerCase() === subjectInput.toLowerCase().trim());
 
+  // ✅ MUTATION NOW USES PATCH INSTEAD OF PUT (Fixes 405 Method Not Allowed)
   const updateMutation = useMutation({
     mutationFn: async (form: Record<string, unknown>) => {
       const payload: Record<string, unknown> = {
@@ -249,14 +242,25 @@ export default function StaffDetailPage() {
         },
       };
 
-      const res = await fetch(`${API_BASE}/staff/${staffId}`, {
-        method: "PUT",
+      // Try PATCH first
+      let res = await fetch(`${API_BASE}/staff/${staffId}`, {
+        method: "PATCH",
         headers: getAuthHeaders(tenantId),
         body: JSON.stringify(payload),
       });
+
+      // If PATCH is not allowed for some reason, fallback to PUT
+      if (res.status === 405) {
+        res = await fetch(`${API_BASE}/staff/${staffId}`, {
+          method: "PUT",
+          headers: getAuthHeaders(tenantId),
+          body: JSON.stringify(payload),
+        });
+      }
+
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const detail = (data as any)?.detail;
+        const detail = (data as any)?.detail || (data as any)?.error?.message;
         const msg = typeof detail === "string" ? detail : Array.isArray(detail) ? detail.map((d: any) => d.msg || d).join(", ") : "Update failed";
         throw new Error(msg);
       }
@@ -618,7 +622,7 @@ export default function StaffDetailPage() {
               </div>
             </div>
 
-            {/* 3. CLASS TEACHER SETUP (SMART NATIVE GROUPED DROPDOWN) */}
+            {/* 3. CLASS TEACHER SETUP */}
             <div className="bg-yellow-900/10 border border-yellow-800/30 rounded-xl p-5">
               <p className="text-sm font-bold mb-4 flex items-center gap-2 text-yellow-400">
                 <Star className="w-4 h-4 fill-yellow-500" /> Class Teacher Setup
@@ -646,7 +650,6 @@ export default function StaffDetailPage() {
                     <div className="max-w-sm ml-8">
                       <Label className="text-xs text-slate-400 uppercase tracking-wider mb-2 block">Assign to Class & Section</Label>
                       
-                      {/* NATIVE GROUPED SELECT - BULLETPROOF UI */}
                       <select
                         value={String(editForm.assigned_class || "")}
                         onChange={(e) => setField("assigned_class", e.target.value)}
