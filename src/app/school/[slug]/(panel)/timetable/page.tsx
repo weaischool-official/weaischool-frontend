@@ -25,12 +25,79 @@ const QUICK_SUBJECTS = [
 
 const MAX_PERIODS = 30;
 
-const SUBJECT_ALIASES: Record<string, string[]> = {
-  "information technology": ["it", "computer", "computers", "computer science", "cs", "ip", "information technology"],
-  "computer": ["it", "information technology", "computer science", "cs", "computer"],
-  "mathematics": ["math", "maths", "mathematics"],
-  "social science": ["sst", "social studies", "history", "geography", "civics", "social science"],
-  "science": ["physics", "chemistry", "biology", "evs", "science"],
+// Canonical subject normalization helper
+const normalizeSubject = (s: string): string => {
+  if (!s || typeof s !== 'string') return '';
+  const clean = s.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+  
+  if (['math', 'maths', 'mathematics'].includes(clean)) return 'mathematics';
+  if (['sst', 'social studies', 'social science', 'socialscience', 'history', 'geography', 'civics'].includes(clean)) return 'social science';
+  if (['science', 'physics', 'chemistry', 'biology'].includes(clean)) return 'science';
+  if (['computer', 'computers', 'computer science', 'cs', 'it', 'information technology', 'computer applications'].includes(clean)) return 'computer';
+  if (['evs', 'environmental studies', 'environmental science'].includes(clean)) return 'evs';
+  if (['gk', 'general knowledge'].includes(clean)) return 'general knowledge';
+  if (['pe', 'physical education', 'sports'].includes(clean)) return 'physical education';
+  if (['art', 'drawing', 'craft'].includes(clean)) return 'art';
+  if (['english'].includes(clean)) return 'english';
+  if (['hindi'].includes(clean)) return 'hindi';
+  
+  return clean;
+};
+
+// Safely extract subjects array from teacher staff profile object
+const getTeacherSubjectsArray = (t: any): string[] => {
+  if (!t) return [];
+  
+  const rawList: string[] = [];
+
+  const extract = (val: any) => {
+    if (!val) return;
+    if (Array.isArray(val)) {
+      val.forEach(v => extract(v));
+    } else if (typeof val === 'string') {
+      const trimmed = val.trim();
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) {
+            parsed.forEach(v => extract(v));
+            return;
+          }
+        } catch (e) {}
+      }
+      trimmed.split(',').forEach(s => {
+        if (s.trim()) rawList.push(s.trim());
+      });
+    } else if (typeof val === 'object') {
+      if (val.name) rawList.push(String(val.name));
+      else if (val.subject_name) rawList.push(String(val.subject_name));
+      else if (val.subject) rawList.push(String(val.subject));
+    }
+  };
+
+  extract(t.subjects);
+  extract(t.subjects_taught);
+
+  let extras = t.extras;
+  if (typeof extras === 'string') {
+    try { extras = JSON.parse(extras); } catch (e) { extras = null; }
+  }
+  if (extras && typeof extras === 'object') {
+    extract(extras.subjects);
+    extract(extras.subject);
+    extract(extras.subjects_taught);
+  }
+
+  let extrasData = t.extras_data;
+  if (typeof extrasData === 'string') {
+    try { extrasData = JSON.parse(extrasData); } catch (e) { extrasData = null; }
+  }
+  if (extrasData && typeof extrasData === 'object') {
+    extract(extrasData.subjects);
+    extract(extrasData.subject);
+  }
+
+  return rawList;
 };
 
 export default function TimetableBuilderPage() {
@@ -75,113 +142,6 @@ export default function TimetableBuilderPage() {
     const last = t.last_name || t.lastName || "";
     const n = `${first} ${last}`.trim();
     return n || t.email || "Teacher";
-  };
-
-  // Safely extract subjects from teacher profile object
-  const getTeacherSubjectsArray = (t: any): string[] => {
-    if (!t) return [];
-    
-    const allSubjs = new Set<string>();
-
-    const addItems = (val: any) => {
-      if (!val) return;
-      
-      if (typeof val === 'string') {
-        const trimmed = val.trim();
-        if (trimmed.startsWith('[')) {
-          try {
-            const parsed = JSON.parse(trimmed);
-            if (Array.isArray(parsed)) {
-              parsed.forEach(item => addItems(item));
-              return;
-            }
-          } catch (e) {}
-        }
-        trimmed.split(',').forEach(s => {
-          const clean = s.trim().toLowerCase();
-          if (clean) allSubjs.add(clean);
-        });
-        return;
-      }
-
-      if (Array.isArray(val)) {
-        val.forEach(item => {
-          if (typeof item === 'string') {
-            const clean = item.trim().toLowerCase();
-            if (clean) allSubjs.add(clean);
-          } else if (item && typeof item === 'object') {
-            const name = item.name || item.subject_name || item.subject || '';
-            if (typeof name === 'string' && name.trim()) {
-              allSubjs.add(name.trim().toLowerCase());
-            }
-          }
-        });
-        return;
-      }
-
-      if (typeof val === 'object') {
-        const name = val.name || val.subject_name || val.subject || '';
-        if (typeof name === 'string' && name.trim()) {
-          allSubjs.add(name.trim().toLowerCase());
-        }
-      }
-    };
-
-    addItems(t.subjects);
-    addItems(t.subjects_taught);
-
-    let extras = t.extras;
-    if (typeof extras === 'string') {
-      try {
-        extras = JSON.parse(extras);
-      } catch (e) {
-        extras = null;
-      }
-    }
-    if (extras && typeof extras === 'object') {
-      addItems(extras.subjects);
-      addItems(extras.subject);
-      addItems(extras.subjects_taught);
-    }
-
-    let extrasData = t.extras_data;
-    if (typeof extrasData === 'string') {
-      try {
-        extrasData = JSON.parse(extrasData);
-      } catch (e) {
-        extrasData = null;
-      }
-    }
-    if (extrasData && typeof extrasData === 'object') {
-      addItems(extrasData.subjects);
-      addItems(extrasData.subject);
-    }
-
-    return Array.from(allSubjs);
-  };
-
-  // Strict subject matching helper with aliases
-  const isSubjectMatch = (targetSubject: string, teacherSubjects: string[]): boolean => {
-    if (!targetSubject || !teacherSubjects || teacherSubjects.length === 0) return false;
-    
-    const target = targetSubject.toLowerCase().trim();
-
-    for (const ts of teacherSubjects) {
-      if (ts === target || ts.includes(target) || target.includes(ts)) {
-        return true;
-      }
-    }
-
-    const aliases = SUBJECT_ALIASES[target] || [];
-    for (const alias of aliases) {
-      for (const ts of teacherSubjects) {
-        if (ts === alias || ts.includes(alias) || alias.includes(ts)) {
-          return true;
-        }
-      }
-    }
-
-    return false;
   };
 
   // 1. Fetch Classes on mount
@@ -700,21 +660,21 @@ export default function TimetableBuilderPage() {
                     const assigned = assignments[sub.id];
                     const isAssigning = assigningId === sub.id;
                     const selectedVal = getAssignedTeacherValue(assigned);
-                    const subName = sub.subject_name;
+                    const targetNorm = normalizeSubject(sub.subject_name);
 
                     // STRICT FILTERING: Only teachers who have this subject in staff profile
                     const eligibleTeachers = teachers.filter(t => {
-                      const realId = t.id || t.user_id || t.user?.id;
-                      
-                      // Keep currently selected teacher so active assignment selection is preserved
-                      if (realId && selectedVal && realId === selectedVal) return true;
-
                       const tSubs = getTeacherSubjectsArray(t);
-                      return isSubjectMatch(subName, tSubs);
+                      const normalizedTeacherSubjs = tSubs.map(s => normalizeSubject(s));
+                      return normalizedTeacherSubjs.includes(targetNorm);
                     });
 
+                    // Check if assigned teacher is truly eligible
+                    const isSelectedValValid = eligibleTeachers.some(t => (t.id || t.user_id || t.user?.id) === selectedVal);
+                    const activeSelectValue = isSelectedValValid ? selectedVal : "";
+
                     return (
-                      <div key={sub.id} className={`flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-xl border transition-all ${assigned ? "border-emerald-800/50 bg-emerald-950/20" : "border-amber-800/40 bg-amber-950/10"}`}>
+                      <div key={sub.id} className={`flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-xl border transition-all ${assigned && isSelectedValValid ? "border-emerald-800/50 bg-emerald-950/20" : "border-amber-800/40 bg-amber-950/10"}`}>
                         <div className="flex items-center gap-3 flex-1 min-w-0">
                           <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${sub.color_code}25`, border: `1px solid ${sub.color_code}50` }}>
                             <BookOpen className="w-4 h-4" style={{ color: sub.color_code }} />
@@ -723,7 +683,7 @@ export default function TimetableBuilderPage() {
                             <p className="text-sm font-bold text-white truncate">{sub.subject_name}</p>
                             <p className="text-xs text-slate-400">{sub.periods_per_week} periods/week</p>
                           </div>
-                          {!assigned && (
+                          {(!assigned || !isSelectedValValid) && (
                             <span className="text-[10px] uppercase tracking-wide font-semibold text-amber-400 bg-amber-900/30 border border-amber-800/50 px-2 py-0.5 rounded">
                               Needed
                             </span>
@@ -737,7 +697,7 @@ export default function TimetableBuilderPage() {
                             </div>
                           ) : (
                             <select
-                              value={selectedVal}
+                              value={activeSelectValue}
                               onChange={(e) => handleAssignTeacher(sub.id, e.target.value)}
                               className={`w-full bg-[#0f172a] border text-sm rounded-lg px-3 py-2.5 outline-none transition-colors ${eligibleTeachers.length === 0 ? "border-amber-800/50 text-amber-400" : "border-slate-600 text-white focus:border-blue-500"}`}
                             >
@@ -751,7 +711,7 @@ export default function TimetableBuilderPage() {
                                 );
                               })}
                               {eligibleTeachers.length === 0 && (
-                                <option disabled value="none">No teachers for "{sub.subject_name}"</option>
+                                <option disabled value="none">No teacher configured for "{sub.subject_name}" in Staff profiles</option>
                               )}
                             </select>
                           )}
