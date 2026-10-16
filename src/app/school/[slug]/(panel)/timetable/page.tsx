@@ -300,7 +300,7 @@ export default function TimetableBuilderPage() {
     return () => clearTimeout(debounce);
   }, [subjectQuery]);
 
-  // 5. Load Teachers + Assignments + Workloads when Tab 2 opens (WITH FAIL-SAFE ENHANCED DETAIL FETCH)
+  // 5. Load Teachers + Assignments + Workloads when Tab 2 opens
   useEffect(() => {
     if (activeTab !== "teachers" || !selectedClassId) return;
 
@@ -321,12 +321,9 @@ export default function TimetableBuilderPage() {
           }
         }
 
-        // FAIL-SAFE ENHANCEMENT: For any teacher missing extras or subjects, fetch full profile (/staff/{id}) in parallel
+        // Fetch full profile details for all teachers to ensure extras are loaded
         const enrichedTeachers = await Promise.all(
           teacherList.map(async (t) => {
-            const extracted = getTeacherSubjects(t);
-            if (extracted.length > 0) return t;
-
             const staffId = t.id || t.user_id || t.user?.id;
             if (!staffId) return t;
             try {
@@ -806,28 +803,24 @@ export default function TimetableBuilderPage() {
                     const isAssigning = assigningId === sub.id;
                     const selectedVal = getAssignedTeacherValue(assigned);
 
-                    // STRICT FILTER: Only teachers whose profile subjects match sub.subject_name
-                    const eligibleTeachers = teachers.filter((t) => {
+                    // Filter matching teachers based on profile subjects
+                    const matchingTeachers = teachers.filter((t) => {
                       const tSubjs = getTeacherSubjects(t);
                       return tSubjs.some((ts) => matchSubjects(sub.subject_name, ts));
                     });
 
-                    // Check if currently assigned teacher is in eligible list
-                    const isAssignedEligible = eligibleTeachers.some((t) => {
-                      const realId = t.id || t.user_id || t.user?.id;
-                      return realId === selectedVal;
-                    });
+                    // If matching teachers exist, show them. Otherwise show ALL available teachers so admin can assign easily
+                    const dropdownTeachers = matchingTeachers.length > 0 ? matchingTeachers : teachers;
 
-                    const assignedTeacherObj =
-                      !isAssignedEligible && selectedVal
-                        ? teachers.find((t) => (t.id || t.user_id || t.user?.id) === selectedVal)
-                        : null;
+                    const assignedTeacherObj = selectedVal
+                      ? teachers.find((t) => (t.id || t.user_id || t.user?.id) === selectedVal)
+                      : null;
 
                     return (
                       <div
                         key={sub.id}
                         className={`flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-xl border transition-all ${
-                          assigned && isAssignedEligible
+                          assigned
                             ? "border-emerald-800/50 bg-emerald-950/20"
                             : "border-amber-800/40 bg-amber-950/10"
                         }`}
@@ -850,7 +843,7 @@ export default function TimetableBuilderPage() {
                               {sub.periods_per_week} periods/week
                             </p>
                           </div>
-                          {(!assigned || !isAssignedEligible) && (
+                          {!assigned && (
                             <span className="text-[10px] uppercase tracking-wide font-semibold text-amber-400 bg-amber-900/30 border border-amber-800/50 px-2 py-0.5 rounded">
                               Needed
                             </span>
@@ -864,43 +857,21 @@ export default function TimetableBuilderPage() {
                             </div>
                           ) : (
                             <select
-                              value={
-                                isAssignedEligible
-                                  ? selectedVal
-                                  : assignedTeacherObj
-                                  ? selectedVal
-                                  : ""
-                              }
+                              value={selectedVal}
                               onChange={(e) => handleAssignTeacher(sub.id, e.target.value)}
-                              className={`w-full bg-[#0f172a] border text-sm rounded-lg px-3 py-2.5 outline-none transition-colors ${
-                                eligibleTeachers.length === 0 && !assignedTeacherObj
-                                  ? "border-amber-800/50 text-amber-400"
-                                  : "border-slate-600 text-white focus:border-blue-500"
-                              }`}
+                              className="w-full bg-[#0f172a] border border-slate-600 text-white text-sm rounded-lg px-3 py-2.5 outline-none focus:border-blue-500"
                             >
                               <option value="">-- Select Teacher --</option>
-
-                              {/* Legacy assignment that needs profile update */}
-                              {assignedTeacherObj && (
-                                <option value={selectedVal}>
-                                  {teacherName(assignedTeacherObj)} (Profile Update Needed)
-                                </option>
-                              )}
-
-                              {eligibleTeachers.map((t) => {
+                              {dropdownTeachers.map((t) => {
                                 const realTeacherId = t.id || t.user_id || t.user?.id;
+                                const tSubjs = getTeacherSubjects(t);
+                                const tag = tSubjs.length > 0 ? ` (${tSubjs.join(", ")})` : "";
                                 return (
                                   <option key={t.id} value={realTeacherId}>
-                                    {teacherName(t)}
+                                    {teacherName(t)}{tag}
                                   </option>
                                 );
                               })}
-
-                              {eligibleTeachers.length === 0 && !assignedTeacherObj && (
-                                <option disabled value="none">
-                                  No teacher profile configured for "{sub.subject_name}"
-                                </option>
-                              )}
                             </select>
                           )}
                         </div>
@@ -988,8 +959,8 @@ export default function TimetableBuilderPage() {
                               {tSubjects.join(", ")}
                             </span>
                           ) : (
-                            <span className="text-amber-400 bg-amber-950/40 border border-amber-800/40 px-2 py-0.5 rounded inline-block">
-                              ⚠️ No subjects set in Staff Profile
+                            <span className="text-slate-400 bg-slate-900 border border-slate-700 px-2 py-0.5 rounded inline-block">
+                              General Staff
                             </span>
                           )}
                         </div>
