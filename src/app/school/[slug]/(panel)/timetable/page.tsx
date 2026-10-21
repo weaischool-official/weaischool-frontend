@@ -20,6 +20,7 @@ import {
   Copy,
   X,
   Check,
+  RefreshCw,
 } from "lucide-react";
 
 const QUICK_SUBJECTS = [
@@ -38,6 +39,7 @@ const QUICK_SUBJECTS = [
 const MAX_PERIODS = 30;
 const API_BASE = "https://weaischool-backend.onrender.com/api/v1";
 
+// Helper: Extract Slug directly from window location URL
 const getSlugFromUrl = (): string => {
   if (typeof window === "undefined") return "";
   const parts = window.location.pathname.split("/");
@@ -48,160 +50,106 @@ const getSlugFromUrl = (): string => {
   return "";
 };
 
+// Deep Scanner: Find Authorization token across all LocalStorage and Cookie keys
 const getAuthToken = (): string => {
   if (typeof window === "undefined") return "";
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      const val = localStorage.getItem(key);
+      if (!val) continue;
 
-  const keys = [
-    "school_auth",
-    "token",
-    "access_token",
-    "auth",
-    "user",
-    "weai_token",
-    "school_user",
-    "auth_token",
-  ];
-
-  for (const k of keys) {
-    try {
-      const val = localStorage.getItem(k);
-      if (val) {
+      if (
+        key.includes("token") ||
+        key.includes("auth") ||
+        key.includes("user") ||
+        key.includes("school")
+      ) {
         if (val.startsWith("{") || val.startsWith("[")) {
-          const parsed = JSON.parse(val);
-          if (parsed?.access_token) return parsed.access_token;
-          if (parsed?.token) return parsed.token;
-          if (parsed?.state?.token) return parsed.state.token;
-          if (parsed?.user?.token) return parsed.user.token;
-        } else if (val.length > 10) {
+          try {
+            const parsed = JSON.parse(val);
+            const token =
+              parsed?.access_token ||
+              parsed?.token ||
+              parsed?.state?.token ||
+              parsed?.state?.access_token ||
+              parsed?.state?.user?.access_token ||
+              parsed?.state?.user?.token ||
+              parsed?.user?.token ||
+              parsed?.user?.access_token ||
+              parsed?.current_user?.token;
+            if (token && typeof token === "string" && token.length > 10) return token;
+          } catch (e) {}
+        } else if (val.length > 20 && !val.includes(" ")) {
           return val;
         }
       }
-    } catch (e) {}
-  }
+    }
+  } catch (e) {}
 
   if (typeof document !== "undefined" && document.cookie) {
-    const match = document.cookie.match(/token=([^;]+)/);
+    const match = document.cookie.match(/(?:token|access_token)=([^;]+)/);
     if (match) return match[1];
   }
 
   return "";
 };
 
+// Fail-Safe API Wrapper with automatic retries (for Render cold boot)
+const apiCallWithRetry = async (
+  url: string,
+  method: "GET" | "POST" | "PATCH" | "DELETE" = "GET",
+  body?: any,
+  retries = 3
+): Promise<any> => {
+  const token = getAuthToken();
+  const slug = getSlugFromUrl();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (slug) headers["X-School-Slug"] = slug;
+
+  let finalUrl = `${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
+  if (slug && !finalUrl.includes("slug=")) {
+    finalUrl += (finalUrl.includes("?") ? "&" : "?") + `slug=${slug}`;
+  }
+
+  let lastError: any = null;
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const res = await fetch(finalUrl, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        return { data };
+      }
+
+      // If 404 or 422, don't retry unnecessarily
+      if (res.status === 404 || res.status === 422) {
+        const errorData = await res.json().catch(() => ({}));
+        throw { response: { data: errorData, status: res.status }, message: errorData.detail || "Request failed" };
+      }
+    } catch (err) {
+      lastError = err;
+      if (attempt < retries - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1500)); // Wait 1.5s before retry
+      }
+    }
+  }
+  throw lastError || new Error("Failed after retries");
+};
+
 const api = {
-  get: async (url: string) => {
-    const token = getAuthToken();
-    const slug = getSlugFromUrl();
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    if (slug) headers["X-School-Slug"] = slug;
-
-    let finalUrl = `${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
-    if (slug && !finalUrl.includes("slug=")) {
-      finalUrl += (finalUrl.includes("?") ? "&" : "?") + `slug=${slug}`;
-    }
-
-    const res = await fetch(finalUrl, { headers });
-    if (!res.ok) {
-      const errorData = await res.json().catch(() => ({}));
-      throw {
-        response: { data: errorData, status: res.status },
-        message: errorData.detail || "Request failed",
-      };
-    }
-    const data = await res.json();
-    return { data };
-  },
-
-  post: async (url: string, body?: any) => {
-    const token = getAuthToken();
-    const slug = getSlugFromUrl();
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    if (slug) headers["X-School-Slug"] = slug;
-
-    let finalUrl = `${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
-    if (slug && !finalUrl.includes("slug=")) {
-      finalUrl += (finalUrl.includes("?") ? "&" : "?") + `slug=${slug}`;
-    }
-
-    const res = await fetch(finalUrl, {
-      method: "POST",
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    if (!res.ok) {
-      const errorData = await res.json().catch(() => ({}));
-      throw {
-        response: { data: errorData, status: res.status },
-        message: errorData.detail || "Request failed",
-      };
-    }
-    const data = await res.json();
-    return { data };
-  },
-
-  patch: async (url: string, body?: any) => {
-    const token = getAuthToken();
-    const slug = getSlugFromUrl();
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    if (slug) headers["X-School-Slug"] = slug;
-
-    let finalUrl = `${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
-    if (slug && !finalUrl.includes("slug=")) {
-      finalUrl += (finalUrl.includes("?") ? "&" : "?") + `slug=${slug}`;
-    }
-
-    const res = await fetch(finalUrl, {
-      method: "PATCH",
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    if (!res.ok) {
-      const errorData = await res.json().catch(() => ({}));
-      throw {
-        response: { data: errorData, status: res.status },
-        message: errorData.detail || "Request failed",
-      };
-    }
-    const data = await res.json();
-    return { data };
-  },
-
-  delete: async (url: string) => {
-    const token = getAuthToken();
-    const slug = getSlugFromUrl();
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    if (slug) headers["X-School-Slug"] = slug;
-
-    let finalUrl = `${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
-    if (slug && !finalUrl.includes("slug=")) {
-      finalUrl += (finalUrl.includes("?") ? "&" : "?") + `slug=${slug}`;
-    }
-
-    const res = await fetch(finalUrl, {
-      method: "DELETE",
-      headers,
-    });
-    if (!res.ok) {
-      const errorData = await res.json().catch(() => ({}));
-      throw {
-        response: { data: errorData, status: res.status },
-        message: errorData.detail || "Request failed",
-      };
-    }
-    const data = await res.json().catch(() => ({}));
-    return { data };
-  },
+  get: (url: string) => apiCallWithRetry(url, "GET"),
+  post: (url: string, body?: any) => apiCallWithRetry(url, "POST", body),
+  patch: (url: string, body?: any) => apiCallWithRetry(url, "PATCH", body),
+  delete: (url: string) => apiCallWithRetry(url, "DELETE"),
 };
 
 interface TimeSlot {
@@ -325,11 +273,7 @@ const getTeacherSubjects = (t: any): string[] => {
 
   let extras = t.extras;
   if (typeof extras === "string") {
-    try {
-      extras = JSON.parse(extras);
-    } catch (e) {
-      extras = null;
-    }
+    try { extras = JSON.parse(extras); } catch (e) { extras = null; }
   }
   if (extras && typeof extras === "object") {
     extract(extras.subjects);
@@ -339,11 +283,7 @@ const getTeacherSubjects = (t: any): string[] => {
 
   let extrasData = t.extras_data;
   if (typeof extrasData === "string") {
-    try {
-      extrasData = JSON.parse(extrasData);
-    } catch (e) {
-      extrasData = null;
-    }
+    try { extrasData = JSON.parse(extrasData); } catch (e) { extrasData = null; }
   }
   if (extrasData && typeof extrasData === "object") {
     extract(extrasData.subjects);
@@ -354,11 +294,7 @@ const getTeacherSubjects = (t: any): string[] => {
     extract(t.user.subjects);
     let uExtras = t.user.extras;
     if (typeof uExtras === "string") {
-      try {
-        uExtras = JSON.parse(uExtras);
-      } catch (e) {
-        uExtras = null;
-      }
+      try { uExtras = JSON.parse(uExtras); } catch (e) { uExtras = null; }
     }
     if (uExtras && typeof uExtras === "object") {
       extract(uExtras.subjects);
@@ -373,6 +309,7 @@ export default function TimetableBuilderPage() {
   const slugParam = (params?.slug as string) || "";
 
   const [activeTab, setActiveTab] = useState<"subjects" | "teachers" | "timetable">("subjects");
+  const [isLoadingClasses, setIsLoadingClasses] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [isAddingId, setIsAddingId] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -388,7 +325,7 @@ export default function TimetableBuilderPage() {
   const [subjectQuery, setSubjectQuery] = useState("");
   const [apiSuggestions, setApiSuggestions] = useState<any[]>([]);
 
-  // NEW: All subjects created on Subject Master page
+  // All subjects created on Subject Master page (Dance, Drawing, etc.)
   const [schoolSubjects, setSchoolSubjects] = useState<any[]>([]);
 
   // Tab 2 states
@@ -445,47 +382,41 @@ export default function TimetableBuilderPage() {
     return n || t.email || "Teacher";
   };
 
-  // 1. Fetch Classes + School Subject Master on mount
+  // 1. Load Classes & Master Subjects on mount with fail-safe retries
+  const loadClassesAndSubjects = async () => {
+    setIsLoadingClasses(true);
+    try {
+      const res = await api.get("/classes");
+      let data = res.data || [];
+      if (!Array.isArray(data)) {
+        data = data.items || data.classes || data.data || [];
+      }
+      setClasses(data);
+      if (data.length > 0) {
+        setSelectedClassId(data[0].id);
+      }
+    } catch (error: any) {
+      console.error("Error loading classes:", error);
+      showToast("Could not load classes. Click refresh to try again.", "error");
+    } finally {
+      setIsLoadingClasses(false);
+    }
+
+    // Load School Subject Master page list (Dance, Drawing, etc.)
+    try {
+      const resSub = await api.get("/subjects");
+      let subData = resSub.data || [];
+      if (!Array.isArray(subData)) {
+        subData = subData.items || subData.subjects || subData.data || [];
+      }
+      setSchoolSubjects(subData);
+    } catch (err) {
+      setSchoolSubjects([]);
+    }
+  };
+
   useEffect(() => {
-    const fetchClasses = async () => {
-      try {
-        const res = await api.get("/classes");
-        let data = res.data || [];
-        if (!Array.isArray(data)) {
-          data = data.items || data.classes || data.data || [];
-        }
-        setClasses(data);
-        if (data.length > 0) setSelectedClassId(data[0].id);
-      } catch (error: any) {
-        console.error("Error loading classes:", error);
-        showToast("Failed to load classes. Please refresh page.", "error");
-      }
-    };
-
-    const fetchSchoolSubjects = async () => {
-      try {
-        // Primary: school subject master list
-        const res = await api.get("/subjects");
-        let data = res.data || [];
-        if (!Array.isArray(data)) {
-          data = data.items || data.subjects || data.data || [];
-        }
-        setSchoolSubjects(data);
-      } catch (err) {
-        // Fallback endpoints some backends use
-        try {
-          const res2 = await api.get("/class-subjects/master");
-          let data2 = res2.data || [];
-          if (!Array.isArray(data2)) data2 = data2.items || data2.data || [];
-          setSchoolSubjects(data2);
-        } catch {
-          setSchoolSubjects([]);
-        }
-      }
-    };
-
-    fetchClasses();
-    fetchSchoolSubjects();
+    loadClassesAndSubjects();
   }, [slugParam]);
 
   // 2. Fetch Sections when Class changes
@@ -555,7 +486,7 @@ export default function TimetableBuilderPage() {
     fetchSubjects();
   }, [selectedClassId, selectedSectionId]);
 
-  // 4. Search suggestions (API + local school subjects)
+  // 4. Search suggestions
   useEffect(() => {
     if (subjectQuery.trim() === "") {
       setApiSuggestions([]);
@@ -685,23 +616,15 @@ export default function TimetableBuilderPage() {
     }
   }, [activeTab, selectedClassId, selectedSectionId]);
 
-  /**
-   * IMPORTANT:
-   * Merge Subject Master page subjects + default quick list.
-   * Search "Dance" / "Drawing" will show if created on Subjects page.
-   */
+  // Merge Master Subjects (Dance, Drawing, etc.) + Defaults for Quick Add Chips
   const getDisplayedChips = () => {
     const addedNames = classSubjects.map((cs) => (cs.subject_name || "").toLowerCase());
-
-    // Build unique master list
     const masterMap = new Map<string, { name: string; color: string }>();
 
-    // 1) Defaults first
     QUICK_SUBJECTS.forEach((s) => {
       masterMap.set(s.name.toLowerCase(), s);
     });
 
-    // 2) Live subjects from Subject Master page (Dance, Drawing, etc.)
     schoolSubjects.forEach((s: any) => {
       const name = (s.subject_name || s.name || s.title || "").trim();
       if (!name) return;
@@ -715,10 +638,8 @@ export default function TimetableBuilderPage() {
     });
 
     let chips = Array.from(masterMap.values());
-
     const q = subjectQuery.trim().toLowerCase();
     if (q.length > 0) {
-      // Prefer backend suggestions if present
       if (Array.isArray(apiSuggestions) && apiSuggestions.length > 0) {
         const fromApi = apiSuggestions
           .map((s: any) => ({
@@ -727,9 +648,7 @@ export default function TimetableBuilderPage() {
           }))
           .filter((s) => s.name);
 
-        // Also keep local matches (so Dance from master always appears)
         const localMatches = chips.filter((c) => c.name.toLowerCase().includes(q));
-
         const merged = new Map<string, { name: string; color: string }>();
         [...fromApi, ...localMatches].forEach((item) => {
           merged.set(item.name.toLowerCase(), item);
@@ -1009,6 +928,7 @@ export default function TimetableBuilderPage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6 text-slate-200">
+      {/* Toast Notification */}
       {toastNotice && (
         <div
           className={`fixed bottom-5 right-5 z-50 p-4 rounded-xl shadow-lg border flex items-center gap-3 text-sm font-semibold transition-all ${
@@ -1028,6 +948,7 @@ export default function TimetableBuilderPage() {
         </div>
       )}
 
+      {/* HEADER */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white tracking-tight">Smart Timetable Builder</h1>
@@ -1035,8 +956,18 @@ export default function TimetableBuilderPage() {
             Setup section-wise subjects, assign teachers, and build schedules.
           </p>
         </div>
+
+        {/* Manual Refresh Button */}
+        <button
+          onClick={loadClassesAndSubjects}
+          className="flex items-center gap-2 px-4 py-2 bg-[#111827] border border-slate-700 hover:border-slate-500 rounded-xl text-xs font-semibold text-slate-300 transition w-fit"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isLoadingClasses ? "animate-spin text-blue-400" : ""}`} />
+          Refresh Data
+        </button>
       </div>
 
+      {/* 3-TAB NAVIGATION */}
       <div className="flex bg-[#111827] border border-slate-800 p-1.5 rounded-xl w-fit shadow-sm overflow-x-auto">
         <button
           onClick={() => setActiveTab("subjects")}
@@ -1070,24 +1001,30 @@ export default function TimetableBuilderPage() {
         </button>
       </div>
 
+      {/* GLOBAL SELECTORS */}
       <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 flex flex-wrap items-center gap-6 shadow-sm">
-        <div className="flex-1 min-w-[200px] max-w-xs">
-          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
+        <div className="flex-1 min-w-[200px] max-w-xs relative">
+          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
             Select Class
+            {isLoadingClasses && <Loader2 className="w-3 h-3 animate-spin text-blue-400" />}
           </label>
           <select
             value={selectedClassId}
             onChange={(e) => setSelectedClassId(e.target.value)}
-            className="w-full bg-[#0f172a] border border-slate-700 text-white rounded-lg px-3 py-2.5 outline-none focus:border-blue-500"
+            disabled={isLoadingClasses || classes.length === 0}
+            className="w-full bg-[#0f172a] border border-slate-700 text-white rounded-lg px-3 py-2.5 outline-none focus:border-blue-500 disabled:opacity-50"
           >
-            <option value="" disabled className="text-slate-500">
-              -- Choose Class --
-            </option>
-            {classes.map((cls) => (
-              <option key={cls.id} value={cls.id}>
-                {cls.name || cls.class_name}
-              </option>
-            ))}
+            {isLoadingClasses ? (
+              <option value="">Loading classes from server...</option>
+            ) : classes.length === 0 ? (
+              <option value="">No classes found</option>
+            ) : (
+              classes.map((cls) => (
+                <option key={cls.id} value={cls.id}>
+                  {cls.name || cls.class_name}
+                </option>
+              ))
+            )}
           </select>
         </div>
 
@@ -1124,7 +1061,7 @@ export default function TimetableBuilderPage() {
         )}
       </div>
 
-      {/* TAB 1 */}
+      {/* TAB 1: SUBJECTS SETUP */}
       {activeTab === "subjects" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-1 space-y-4">
@@ -1177,17 +1114,10 @@ export default function TimetableBuilderPage() {
                 )}
               </div>
 
-              {displayedChips.length === 0 && subjectQuery.trim() === "" && (
-                <p className="text-xs text-slate-500 mt-3">
-                  No master subjects found yet. Create them on Subjects page, or type a custom name.
-                </p>
-              )}
-
               <div className="mt-5 p-3 bg-blue-900/10 border border-blue-900/30 rounded-lg flex items-start gap-2.5">
                 <AlertCircle className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                 <p className="text-xs text-slate-400 leading-relaxed">
                   Subjects are saved specifically for <strong>{getSelectedContextName()}</strong>.
-                  Master list is loaded from your school Subjects page.
                 </p>
               </div>
             </div>
@@ -1274,7 +1204,7 @@ export default function TimetableBuilderPage() {
         </div>
       )}
 
-      {/* TAB 2 */}
+      {/* TAB 2: ASSIGN TEACHERS */}
       {activeTab === "teachers" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2">
@@ -1500,7 +1430,7 @@ export default function TimetableBuilderPage() {
         </div>
       )}
 
-      {/* TAB 3 */}
+      {/* TAB 3: SMART DRAG & DROP GRID BUILDER */}
       {activeTab === "timetable" && (
         <div className="bg-[#111827] rounded-2xl shadow-sm border border-slate-800 overflow-hidden flex flex-col">
           <div className="p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4 bg-slate-900/50">
