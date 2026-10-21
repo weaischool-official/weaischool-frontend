@@ -17,7 +17,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
-// --- INTERNAL ZERO-DEPENDENCY API & TOAST ENGINE ---
+// --- ZERO-DEPENDENCY API & TOAST ENGINE ---
 const API_BASE_URL = "https://weaischool-backend.onrender.com/api/v1";
 
 const getSlugFromUrl = (): string => {
@@ -32,6 +32,7 @@ const getSlugFromUrl = (): string => {
 
 const getAuthToken = (): string => {
   if (typeof window === "undefined") return "";
+
   const directKeys = [
     "token",
     "access_token",
@@ -41,7 +42,10 @@ const getAuthToken = (): string => {
     "weai_token",
     "accessToken",
     "authToken",
+    "admin_token",
+    "user_token",
   ];
+
   for (const k of directKeys) {
     const val = localStorage.getItem(k) || sessionStorage.getItem(k);
     if (val && val !== "null" && val !== "undefined") {
@@ -49,40 +53,59 @@ const getAuthToken = (): string => {
       if (clean) return clean;
     }
   }
+
+  // Deep scan localStorage for Zustand or nested JSON tokens
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (!key) continue;
       const rawVal = localStorage.getItem(key);
       if (!rawVal) continue;
+
       const trimmed = rawVal.replace(/^"|"$/g, "").trim();
-      if (trimmed.startsWith("eyJ") && trimmed.length > 20) return trimmed;
+      if (trimmed.startsWith("eyJ") && trimmed.length > 20) {
+        return trimmed;
+      }
+
       try {
         const parsed = JSON.parse(rawVal);
         if (parsed && typeof parsed === "object") {
           const t =
             parsed.state?.token ||
             parsed.state?.access_token ||
+            parsed.state?.accessToken ||
+            parsed.state?.jwt ||
+            parsed.state?.user?.token ||
             parsed.token ||
             parsed.access_token ||
-            parsed.user?.token;
+            parsed.accessToken ||
+            parsed.jwt ||
+            parsed.user?.token ||
+            parsed.session?.access_token;
           if (typeof t === "string" && t.trim()) return t.trim();
         }
       } catch (e) {}
     }
   } catch (e) {}
+
   return "";
 };
 
-const requestWithRetry = async (endpoint: string, options: RequestInit = {}, retries = 3) => {
+const requestWithRetry = async (endpoint: string, options: RequestInit = {}, retries = 5, delayMs = 2000) => {
   const token = getAuthToken();
   const slug = getSlugFromUrl();
+
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...((options.headers as Record<string, string>) || {}),
   };
-  if (token) headers["Authorization"] = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
-  if (slug) headers["X-School-Slug"] = slug;
+
+  if (token) {
+    headers["Authorization"] = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+  }
+  if (slug) {
+    headers["X-School-Slug"] = slug;
+  }
 
   const cleanEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
   const url = `${API_BASE_URL}${cleanEndpoint}`;
@@ -95,6 +118,15 @@ const requestWithRetry = async (endpoint: string, options: RequestInit = {}, ret
         const data = await res.json();
         return { data };
       }
+
+      if (res.status === 404 || res.status === 401) {
+        // Return soft null to try next fallback endpoint
+        if (attempt < retries) {
+          await new Promise((r) => setTimeout(r, 1000));
+          continue;
+        }
+      }
+
       if (attempt === retries) {
         const errData = await res.json().catch(() => ({}));
         const err: any = new Error(`Request failed with status ${res.status}`);
@@ -103,10 +135,34 @@ const requestWithRetry = async (endpoint: string, options: RequestInit = {}, ret
       }
     } catch (err) {
       if (attempt === retries) throw err;
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, delayMs * attempt));
     }
   }
   return { data: [] };
+};
+
+// Robust multi-endpoint fetcher
+const fetchMultiEndpoints = async (endpoints: string[]) => {
+  for (const ep of endpoints) {
+    try {
+      const res = await requestWithRetry(ep, { method: "GET" }, 2, 1200);
+      let data = res?.data;
+      if (data) {
+        let list: any[] = [];
+        if (Array.isArray(data)) list = data;
+        else if (Array.isArray(data.data)) list = data.data;
+        else if (Array.isArray(data.items)) list = data.items;
+        else if (Array.isArray(data.classes)) list = data.classes;
+        else if (Array.isArray(data.subjects)) list = data.subjects;
+        else if (Array.isArray(data.staff)) list = data.staff;
+
+        if (list.length > 0) return list;
+      }
+    } catch (e) {
+      // Try next endpoint pattern
+    }
+  }
+  return [];
 };
 
 const api = {
@@ -118,8 +174,7 @@ const api = {
   delete: (url: string) => requestWithRetry(url, { method: "DELETE" }),
 };
 
-let toastListener: ((msg: string, type: "success" | "error" | "warning" | "info") => void) | null =
-  null;
+let toastListener: ((msg: string, type: "success" | "error" | "warning" | "info") => void) | null = null;
 
 const toast = {
   success: (msg: string) => toastListener && toastListener(msg, "success"),
@@ -295,7 +350,7 @@ export default function TimetableBuilderPage() {
   const [gridData, setGridData] = useState<Record<string, any>>({});
   const [isSavingGrid, setIsSavingGrid] = useState(false);
 
-  // Floating Toast State
+  // Toast Banner State
   const [toastBanner, setToastBanner] = useState<{
     msg: string;
     type: "success" | "error" | "warning" | "info";
@@ -341,32 +396,26 @@ export default function TimetableBuilderPage() {
     return n || t.email || "Teacher";
   };
 
-  // 1. Fetch Classes on mount
+  // 1. Fetch Classes with Fail-Safe Multi-Endpoint Fallbacks
   useEffect(() => {
     const fetchClasses = async () => {
+      const slug = getSlugFromUrl();
       try {
-        let res = await api.get("/classes");
-        let data = res.data;
+        const dataList = await fetchMultiEndpoints([
+          `/academics/classes?limit=100&slug=${slug}`,
+          `/classes?slug=${slug}`,
+          `/academics/classes`,
+          `/classes`,
+        ]);
 
-        if (!Array.isArray(data)) {
-          if (Array.isArray(data?.data)) data = data.data;
-          else if (Array.isArray(data?.items)) data = data.items;
-          else if (Array.isArray(data?.classes)) data = data.classes;
-          else data = [];
+        if (dataList && dataList.length > 0) {
+          setClasses(dataList);
+          setSelectedClassId(dataList[0].id || dataList[0].class_id);
+        } else {
+          setClasses([]);
         }
-
-        if (data.length === 0) {
-          try {
-            const fbRes = await api.get("/academics/classes");
-            if (Array.isArray(fbRes.data)) data = fbRes.data;
-            else if (Array.isArray(fbRes.data?.data)) data = fbRes.data.data;
-          } catch (e) {}
-        }
-
-        setClasses(data);
-        if (data.length > 0) setSelectedClassId(data[0].id);
       } catch (error) {
-        toast.error("Failed to load classes");
+        console.warn("Class loading error handled gracefully:", error);
       }
     };
     fetchClasses();
@@ -380,27 +429,30 @@ export default function TimetableBuilderPage() {
       return;
     }
 
-    const currentClass = classes.find((c) => c.id === selectedClassId);
+    const currentClass = classes.find((c) => (c.id || c.class_id) === selectedClassId);
     if (
       currentClass?.sections &&
       Array.isArray(currentClass.sections) &&
       currentClass.sections.length > 0
     ) {
       setSections(currentClass.sections);
-      setSelectedSectionId(currentClass.sections[0].id);
+      setSelectedSectionId(currentClass.sections[0].id || currentClass.sections[0].section_id);
       return;
     }
 
     const fetchSections = async () => {
       setIsLoadingSections(true);
+      const slug = getSlugFromUrl();
       try {
-        const res = await api.get(`/classes/${selectedClassId}/sections`);
-        let secData = res.data || [];
-        if (!Array.isArray(secData) && Array.isArray(secData.data)) secData = secData.data;
+        const secList = await fetchMultiEndpoints([
+          `/classes/${selectedClassId}/sections?slug=${slug}`,
+          `/academics/classes/${selectedClassId}/sections`,
+          `/classes/${selectedClassId}/sections`,
+        ]);
 
-        setSections(secData);
-        if (secData.length > 0) {
-          setSelectedSectionId(secData[0].id);
+        setSections(secList);
+        if (secList.length > 0) {
+          setSelectedSectionId(secList[0].id || secList[0].section_id);
         } else {
           setSelectedSectionId("");
         }
@@ -420,8 +472,9 @@ export default function TimetableBuilderPage() {
 
     const fetchSubjects = async () => {
       setIsLoading(true);
+      const slug = getSlugFromUrl();
       try {
-        let url = `/class-subjects?class_id=${selectedClassId}`;
+        let url = `/class-subjects?class_id=${selectedClassId}&slug=${slug}`;
         if (selectedSectionId) {
           url += `&section_id=${selectedSectionId}`;
         }
@@ -462,20 +515,13 @@ export default function TimetableBuilderPage() {
 
     const loadTab2 = async () => {
       setIsLoadingTeachers(true);
+      const slug = getSlugFromUrl();
       try {
-        let teacherList: any[] = [];
-        try {
-          const r = await api.get("/staff?role=teacher");
-          teacherList = Array.isArray(r.data) ? r.data : r.data?.items || r.data?.data || [];
-        } catch {
-          try {
-            const r2 = await api.get("/staff");
-            const all = Array.isArray(r2.data) ? r2.data : r2.data?.items || [];
-            teacherList = all;
-          } catch {
-            teacherList = [];
-          }
-        }
+        let teacherList = await fetchMultiEndpoints([
+          `/staff?role=TEACHER&slug=${slug}`,
+          `/staff?limit=100`,
+          `/teachers`,
+        ]);
 
         const enrichedTeachers = await Promise.all(
           teacherList.map(async (t) => {
@@ -493,7 +539,7 @@ export default function TimetableBuilderPage() {
         setTeachers(enrichedTeachers);
 
         try {
-          let aUrl = `/teacher-assignments?class_id=${selectedClassId}`;
+          let aUrl = `/teacher-assignments?class_id=${selectedClassId}&slug=${slug}`;
           if (selectedSectionId) aUrl += `&section_id=${selectedSectionId}`;
           const aRes = await api.get(aUrl);
           const list = Array.isArray(aRes.data) ? aRes.data : aRes.data?.data || [];
@@ -507,7 +553,7 @@ export default function TimetableBuilderPage() {
         }
 
         try {
-          const wRes = await api.get("/teacher-assignments/workload/all");
+          const wRes = await api.get(`/teacher-assignments/workload/all?slug=${slug}`);
           const wData = Array.isArray(wRes.data) ? wRes.data : wRes.data?.data || [];
           setWorkloads(wData);
         } catch {
@@ -646,7 +692,8 @@ export default function TimetableBuilderPage() {
       }));
 
       try {
-        const wRes = await api.get("/teacher-assignments/workload/all");
+        const slug = getSlugFromUrl();
+        const wRes = await api.get(`/teacher-assignments/workload/all?slug=${slug}`);
         const wData = Array.isArray(wRes.data) ? wRes.data : wRes.data?.data || [];
         setWorkloads(wData);
       } catch {}
@@ -824,14 +871,18 @@ export default function TimetableBuilderPage() {
             onChange={(e) => setSelectedClassId(e.target.value)}
             className="w-full bg-[#0f172a] border border-slate-700 text-white rounded-lg px-3 py-2.5 outline-none focus:border-blue-500"
           >
-            <option value="" disabled className="text-slate-500">
-              -- Choose Class --
-            </option>
-            {classes.map((cls) => (
-              <option key={cls.id} value={cls.id}>
-                {cls.name}
-              </option>
-            ))}
+            {classes.length === 0 ? (
+              <option value="">No classes found in database</option>
+            ) : (
+              classes.map((cls) => {
+                const cId = cls.id || cls.class_id;
+                return (
+                  <option key={cId} value={cId}>
+                    {cls.name || cls.class_name || `Class ${cId}`}
+                  </option>
+                );
+              })
+            )}
           </select>
         </div>
 
@@ -849,11 +900,14 @@ export default function TimetableBuilderPage() {
             {sections.length === 0 ? (
               <option value="">No sections found</option>
             ) : (
-              sections.map((sec) => (
-                <option key={sec.id} value={sec.id}>
-                  {sec.name}
-                </option>
-              ))
+              sections.map((sec) => {
+                const sId = sec.id || sec.section_id;
+                return (
+                  <option key={sId} value={sId}>
+                    {sec.name || sec.section_name || `Section ${sId}`}
+                  </option>
+                );
+              })
             )}
           </select>
         </div>
