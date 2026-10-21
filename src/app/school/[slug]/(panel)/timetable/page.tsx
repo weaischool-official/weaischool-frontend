@@ -19,7 +19,7 @@ import {
   Save,
   Copy,
   X,
-  Check
+  Check,
 } from "lucide-react";
 
 const QUICK_SUBJECTS = [
@@ -36,88 +36,170 @@ const QUICK_SUBJECTS = [
 ];
 
 const MAX_PERIODS = 30;
-
-// Internal API Wrapper to replace missing @/lib/api
 const API_BASE = "https://weaischool-backend.onrender.com/api/v1";
 
-const getAuthToken = () => {
+const getSlugFromUrl = (): string => {
   if (typeof window === "undefined") return "";
-  const authStr = localStorage.getItem("school_auth");
-  if (authStr) {
-    try {
-      const parsed = JSON.parse(authStr);
-      return parsed.access_token || parsed.token || "";
-    } catch (e) {
-      return authStr;
-    }
+  const parts = window.location.pathname.split("/");
+  const schoolIdx = parts.indexOf("school");
+  if (schoolIdx !== -1 && parts[schoolIdx + 1]) {
+    return parts[schoolIdx + 1];
   }
-  return localStorage.getItem("token") || "";
+  return "";
+};
+
+const getAuthToken = (): string => {
+  if (typeof window === "undefined") return "";
+
+  const keys = [
+    "school_auth",
+    "token",
+    "access_token",
+    "auth",
+    "user",
+    "weai_token",
+    "school_user",
+    "auth_token",
+  ];
+
+  for (const k of keys) {
+    try {
+      const val = localStorage.getItem(k);
+      if (val) {
+        if (val.startsWith("{") || val.startsWith("[")) {
+          const parsed = JSON.parse(val);
+          if (parsed?.access_token) return parsed.access_token;
+          if (parsed?.token) return parsed.token;
+          if (parsed?.state?.token) return parsed.state.token;
+          if (parsed?.user?.token) return parsed.user.token;
+        } else if (val.length > 10) {
+          return val;
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (typeof document !== "undefined" && document.cookie) {
+    const match = document.cookie.match(/token=([^;]+)/);
+    if (match) return match[1];
+  }
+
+  return "";
 };
 
 const api = {
   get: async (url: string) => {
     const token = getAuthToken();
-    const res = await fetch(`${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`, {
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    });
+    const slug = getSlugFromUrl();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (slug) headers["X-School-Slug"] = slug;
+
+    let finalUrl = `${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
+    if (slug && !finalUrl.includes("slug=")) {
+      finalUrl += (finalUrl.includes("?") ? "&" : "?") + `slug=${slug}`;
+    }
+
+    const res = await fetch(finalUrl, { headers });
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({}));
-      throw { response: { data: errorData, status: res.status }, message: errorData.detail || "Request failed" };
+      throw {
+        response: { data: errorData, status: res.status },
+        message: errorData.detail || "Request failed",
+      };
     }
     const data = await res.json();
     return { data };
   },
+
   post: async (url: string, body?: any) => {
     const token = getAuthToken();
-    const res = await fetch(`${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`, {
+    const slug = getSlugFromUrl();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (slug) headers["X-School-Slug"] = slug;
+
+    let finalUrl = `${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
+    if (slug && !finalUrl.includes("slug=")) {
+      finalUrl += (finalUrl.includes("?") ? "&" : "?") + `slug=${slug}`;
+    }
+
+    const res = await fetch(finalUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      headers,
       body: body ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({}));
-      throw { response: { data: errorData, status: res.status }, message: errorData.detail || "Request failed" };
+      throw {
+        response: { data: errorData, status: res.status },
+        message: errorData.detail || "Request failed",
+      };
     }
     const data = await res.json();
     return { data };
   },
+
   patch: async (url: string, body?: any) => {
     const token = getAuthToken();
-    const res = await fetch(`${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`, {
+    const slug = getSlugFromUrl();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (slug) headers["X-School-Slug"] = slug;
+
+    let finalUrl = `${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
+    if (slug && !finalUrl.includes("slug=")) {
+      finalUrl += (finalUrl.includes("?") ? "&" : "?") + `slug=${slug}`;
+    }
+
+    const res = await fetch(finalUrl, {
       method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      headers,
       body: body ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({}));
-      throw { response: { data: errorData, status: res.status }, message: errorData.detail || "Request failed" };
+      throw {
+        response: { data: errorData, status: res.status },
+        message: errorData.detail || "Request failed",
+      };
     }
     const data = await res.json();
     return { data };
   },
+
   delete: async (url: string) => {
     const token = getAuthToken();
-    const res = await fetch(`${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`, {
+    const slug = getSlugFromUrl();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (slug) headers["X-School-Slug"] = slug;
+
+    let finalUrl = `${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`;
+    if (slug && !finalUrl.includes("slug=")) {
+      finalUrl += (finalUrl.includes("?") ? "&" : "?") + `slug=${slug}`;
+    }
+
+    const res = await fetch(finalUrl, {
       method: "DELETE",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      headers,
     });
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({}));
-      throw { response: { data: errorData, status: res.status }, message: errorData.detail || "Request failed" };
+      throw {
+        response: { data: errorData, status: res.status },
+        message: errorData.detail || "Request failed",
+      };
     }
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     return { data };
   },
 };
@@ -163,7 +245,6 @@ const DEFAULT_SLOTS: TimeSlot[] = [
 
 const DEFAULT_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-// Subject normalization
 const normalizeSubject = (str: string): string => {
   if (!str) return "";
   return str.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -184,11 +265,13 @@ const matchSubjects = (classSubjectName: string, teacherSubjectName: string): bo
     ["physicaleducation", "pe", "sports", "pt"],
     ["generalknowledge", "gk"],
     ["evs", "environmentalstudies", "environmentalscience"],
-    ["art", "drawing", "craft", "arts"],
+    ["art", "drawing", "craft", "arts", "artcraft"],
     ["english", "eng"],
     ["hindi"],
     ["marathi"],
     ["sanskrit"],
+    ["dance", "dancing"],
+    ["music", "singing"],
   ];
 
   for (const group of synonymGroups) {
@@ -242,7 +325,11 @@ const getTeacherSubjects = (t: any): string[] => {
 
   let extras = t.extras;
   if (typeof extras === "string") {
-    try { extras = JSON.parse(extras); } catch (e) { extras = null; }
+    try {
+      extras = JSON.parse(extras);
+    } catch (e) {
+      extras = null;
+    }
   }
   if (extras && typeof extras === "object") {
     extract(extras.subjects);
@@ -252,7 +339,11 @@ const getTeacherSubjects = (t: any): string[] => {
 
   let extrasData = t.extras_data;
   if (typeof extrasData === "string") {
-    try { extrasData = JSON.parse(extrasData); } catch (e) { extrasData = null; }
+    try {
+      extrasData = JSON.parse(extrasData);
+    } catch (e) {
+      extrasData = null;
+    }
   }
   if (extrasData && typeof extrasData === "object") {
     extract(extrasData.subjects);
@@ -263,7 +354,11 @@ const getTeacherSubjects = (t: any): string[] => {
     extract(t.user.subjects);
     let uExtras = t.user.extras;
     if (typeof uExtras === "string") {
-      try { uExtras = JSON.parse(uExtras); } catch (e) { uExtras = null; }
+      try {
+        uExtras = JSON.parse(uExtras);
+      } catch (e) {
+        uExtras = null;
+      }
     }
     if (uExtras && typeof uExtras === "object") {
       extract(uExtras.subjects);
@@ -275,6 +370,7 @@ const getTeacherSubjects = (t: any): string[] => {
 
 export default function TimetableBuilderPage() {
   const params = useParams();
+  const slugParam = (params?.slug as string) || "";
 
   const [activeTab, setActiveTab] = useState<"subjects" | "teachers" | "timetable">("subjects");
   const [isLoading, setIsLoading] = useState(false);
@@ -291,6 +387,9 @@ export default function TimetableBuilderPage() {
   const [classSubjects, setClassSubjects] = useState<any[]>([]);
   const [subjectQuery, setSubjectQuery] = useState("");
   const [apiSuggestions, setApiSuggestions] = useState<any[]>([]);
+
+  // NEW: All subjects created on Subject Master page
+  const [schoolSubjects, setSchoolSubjects] = useState<any[]>([]);
 
   // Tab 2 states
   const [teachers, setTeachers] = useState<any[]>([]);
@@ -316,19 +415,21 @@ export default function TimetableBuilderPage() {
   const [targetClassId, setTargetClassId] = useState("");
   const [targetSectionId, setTargetSectionId] = useState("");
 
-  // Notification Toast state
-  const [toastNotice, setToastNotice] = useState<{ type: "success" | "error" | "warning"; text: string } | null>(null);
+  const [toastNotice, setToastNotice] = useState<{
+    type: "success" | "error" | "warning";
+    text: string;
+  } | null>(null);
 
   const showToast = (text: string, type: "success" | "error" | "warning" = "success") => {
     setToastNotice({ type, text });
-    setTimeout(() => {
-      setToastNotice(null);
-    }, 3500);
+    setTimeout(() => setToastNotice(null), 3500);
   };
 
   const getSelectedContextName = () => {
-    const clsName = classes.find((c) => c.id === selectedClassId)?.name || "";
-    const secName = sections.find((s) => s.id === selectedSectionId)?.name || "";
+    const selectedCls = classes.find((c) => c.id === selectedClassId);
+    const clsName = selectedCls?.name || selectedCls?.class_name || "";
+    const selectedSec = sections.find((s) => s.id === selectedSectionId);
+    const secName = selectedSec?.name || selectedSec?.section_name || "";
     if (clsName && secName) return `Class ${clsName} (Section ${secName})`;
     if (clsName) return `Class ${clsName}`;
     return "...";
@@ -344,20 +445,50 @@ export default function TimetableBuilderPage() {
     return n || t.email || "Teacher";
   };
 
+  // 1. Fetch Classes + School Subject Master on mount
   useEffect(() => {
     const fetchClasses = async () => {
       try {
         const res = await api.get("/classes");
-        const data = res.data || [];
+        let data = res.data || [];
+        if (!Array.isArray(data)) {
+          data = data.items || data.classes || data.data || [];
+        }
         setClasses(data);
         if (data.length > 0) setSelectedClassId(data[0].id);
-      } catch (error) {
-        showToast("Failed to load classes", "error");
+      } catch (error: any) {
+        console.error("Error loading classes:", error);
+        showToast("Failed to load classes. Please refresh page.", "error");
       }
     };
-    fetchClasses();
-  }, []);
 
+    const fetchSchoolSubjects = async () => {
+      try {
+        // Primary: school subject master list
+        const res = await api.get("/subjects");
+        let data = res.data || [];
+        if (!Array.isArray(data)) {
+          data = data.items || data.subjects || data.data || [];
+        }
+        setSchoolSubjects(data);
+      } catch (err) {
+        // Fallback endpoints some backends use
+        try {
+          const res2 = await api.get("/class-subjects/master");
+          let data2 = res2.data || [];
+          if (!Array.isArray(data2)) data2 = data2.items || data2.data || [];
+          setSchoolSubjects(data2);
+        } catch {
+          setSchoolSubjects([]);
+        }
+      }
+    };
+
+    fetchClasses();
+    fetchSchoolSubjects();
+  }, [slugParam]);
+
+  // 2. Fetch Sections when Class changes
   useEffect(() => {
     if (!selectedClassId) {
       setSections([]);
@@ -366,7 +497,11 @@ export default function TimetableBuilderPage() {
     }
 
     const currentClass = classes.find((c) => c.id === selectedClassId);
-    if (currentClass?.sections && Array.isArray(currentClass.sections) && currentClass.sections.length > 0) {
+    if (
+      currentClass?.sections &&
+      Array.isArray(currentClass.sections) &&
+      currentClass.sections.length > 0
+    ) {
       setSections(currentClass.sections);
       setSelectedSectionId(currentClass.sections[0].id);
       return;
@@ -376,7 +511,10 @@ export default function TimetableBuilderPage() {
       setIsLoadingSections(true);
       try {
         const res = await api.get(`/classes/${selectedClassId}/sections`);
-        const secData = res.data || [];
+        let secData = res.data || [];
+        if (!Array.isArray(secData)) {
+          secData = secData.items || secData.sections || secData.data || [];
+        }
         setSections(secData);
         if (secData.length > 0) {
           setSelectedSectionId(secData[0].id);
@@ -393,6 +531,7 @@ export default function TimetableBuilderPage() {
     fetchSections();
   }, [selectedClassId, classes]);
 
+  // 3. Fetch Class-Section Subjects
   useEffect(() => {
     if (!selectedClassId) return;
 
@@ -402,7 +541,11 @@ export default function TimetableBuilderPage() {
         let url = `/class-subjects?class_id=${selectedClassId}`;
         if (selectedSectionId) url += `&section_id=${selectedSectionId}`;
         const res = await api.get(url);
-        setClassSubjects(res.data || []);
+        let data = res.data || [];
+        if (!Array.isArray(data)) {
+          data = data.items || data.subjects || data.data || [];
+        }
+        setClassSubjects(data);
       } catch (error) {
         console.error("Failed to fetch subjects:", error);
       } finally {
@@ -412,6 +555,7 @@ export default function TimetableBuilderPage() {
     fetchSubjects();
   }, [selectedClassId, selectedSectionId]);
 
+  // 4. Search suggestions (API + local school subjects)
   useEffect(() => {
     if (subjectQuery.trim() === "") {
       setApiSuggestions([]);
@@ -419,16 +563,17 @@ export default function TimetableBuilderPage() {
     }
     const fetchSuggestions = async () => {
       try {
-        const res = await api.get(`/class-subjects/suggestions?query=${subjectQuery}`);
-        setApiSuggestions(res.data.suggestions || []);
+        const res = await api.get(`/class-subjects/suggestions?query=${encodeURIComponent(subjectQuery)}`);
+        setApiSuggestions(res.data?.suggestions || res.data || []);
       } catch (error) {
         setApiSuggestions([]);
       }
     };
-    const debounce = setTimeout(fetchSuggestions, 300);
+    const debounce = setTimeout(fetchSuggestions, 250);
     return () => clearTimeout(debounce);
   }, [subjectQuery]);
 
+  // 5. Teachers & Workload
   useEffect(() => {
     if (activeTab !== "teachers" && activeTab !== "timetable") return;
     if (!selectedClassId) return;
@@ -439,11 +584,13 @@ export default function TimetableBuilderPage() {
         let teacherList: any[] = [];
         try {
           const r = await api.get("/staff?role=teacher");
-          teacherList = Array.isArray(r.data) ? r.data : r.data?.items || r.data?.data || [];
+          const raw = r.data;
+          teacherList = Array.isArray(raw) ? raw : raw?.items || raw?.data || [];
         } catch {
           try {
             const r2 = await api.get("/staff");
-            teacherList = Array.isArray(r2.data) ? r2.data : r2.data?.items || [];
+            const raw2 = r2.data;
+            teacherList = Array.isArray(raw2) ? raw2 : raw2?.items || raw2?.data || [];
           } catch {
             teacherList = [];
           }
@@ -468,7 +615,7 @@ export default function TimetableBuilderPage() {
           let aUrl = `/teacher-assignments?class_id=${selectedClassId}`;
           if (selectedSectionId) aUrl += `&section_id=${selectedSectionId}`;
           const aRes = await api.get(aUrl);
-          const list = aRes.data || [];
+          const list = Array.isArray(aRes.data) ? aRes.data : aRes.data?.items || [];
           const map: Record<string, any> = {};
           list.forEach((a: any) => {
             map[a.class_subject_id] = a;
@@ -480,7 +627,8 @@ export default function TimetableBuilderPage() {
 
         try {
           const wRes = await api.get("/teacher-assignments/workload/all");
-          setWorkloads(wRes.data || []);
+          const wList = Array.isArray(wRes.data) ? wRes.data : wRes.data?.items || [];
+          setWorkloads(wList);
         } catch {
           setWorkloads([]);
         }
@@ -494,11 +642,23 @@ export default function TimetableBuilderPage() {
     }
   }, [activeTab, selectedClassId, selectedSectionId]);
 
+  // 6. Grid Data
+  const fetchTeacherClashes = async () => {
+    try {
+      const res = await api.get(`/timetable-grid/check-clash`);
+      setTeacherClashes(res.data || {});
+    } catch (err) {
+      console.error("Error checking clashes:", err);
+    }
+  };
+
   const fetchGridAndConfig = async () => {
     if (!selectedClassId || !selectedSectionId) return;
     setLoadingGrid(true);
     try {
-      const resConfig = await api.get(`/timetable-grid/config?class_id=${selectedClassId}&section_id=${selectedSectionId}`);
+      const resConfig = await api.get(
+        `/timetable-grid/config?class_id=${selectedClassId}&section_id=${selectedSectionId}`
+      );
       if (resConfig.data && resConfig.data.period_slots && resConfig.data.period_slots.length > 0) {
         setSlotConfig({
           working_days: resConfig.data.working_days || DEFAULT_DAYS,
@@ -506,7 +666,9 @@ export default function TimetableBuilderPage() {
         });
       }
 
-      const resEntries = await api.get(`/timetable-grid/entries?class_id=${selectedClassId}&section_id=${selectedSectionId}`);
+      const resEntries = await api.get(
+        `/timetable-grid/entries?class_id=${selectedClassId}&section_id=${selectedSectionId}`
+      );
       setGridData(resEntries.data || []);
 
       fetchTeacherClashes();
@@ -523,41 +685,83 @@ export default function TimetableBuilderPage() {
     }
   }, [activeTab, selectedClassId, selectedSectionId]);
 
-  const fetchTeacherClashes = async () => {
-    try {
-      const res = await api.get(`/timetable-grid/check-clash`);
-      setTeacherClashes(res.data || {});
-    } catch (err) {
-      console.error("Error checking clashes:", err);
-    }
-  };
-
+  /**
+   * IMPORTANT:
+   * Merge Subject Master page subjects + default quick list.
+   * Search "Dance" / "Drawing" will show if created on Subjects page.
+   */
   const getDisplayedChips = () => {
-    let chips: any[] = [];
-    if (subjectQuery.trim().length > 0) {
-      if (apiSuggestions.length > 0) {
-        chips = apiSuggestions.map((s) => ({
-          name: s.name,
-          color: s.suggested_color || "#3B82F6",
-        }));
-      } else {
-        chips = QUICK_SUBJECTS.filter((s) =>
-          s.name.toLowerCase().includes(subjectQuery.toLowerCase())
-        );
+    const addedNames = classSubjects.map((cs) => (cs.subject_name || "").toLowerCase());
+
+    // Build unique master list
+    const masterMap = new Map<string, { name: string; color: string }>();
+
+    // 1) Defaults first
+    QUICK_SUBJECTS.forEach((s) => {
+      masterMap.set(s.name.toLowerCase(), s);
+    });
+
+    // 2) Live subjects from Subject Master page (Dance, Drawing, etc.)
+    schoolSubjects.forEach((s: any) => {
+      const name = (s.subject_name || s.name || s.title || "").trim();
+      if (!name) return;
+      const key = name.toLowerCase();
+      if (!masterMap.has(key)) {
+        masterMap.set(key, {
+          name,
+          color: s.color_code || s.color || s.suggested_color || "#6B7280",
+        });
       }
-    } else {
-      chips = QUICK_SUBJECTS;
+    });
+
+    let chips = Array.from(masterMap.values());
+
+    const q = subjectQuery.trim().toLowerCase();
+    if (q.length > 0) {
+      // Prefer backend suggestions if present
+      if (Array.isArray(apiSuggestions) && apiSuggestions.length > 0) {
+        const fromApi = apiSuggestions
+          .map((s: any) => ({
+            name: (s.name || s.subject_name || "").trim(),
+            color: s.suggested_color || s.color_code || s.color || "#3B82F6",
+          }))
+          .filter((s) => s.name);
+
+        // Also keep local matches (so Dance from master always appears)
+        const localMatches = chips.filter((c) => c.name.toLowerCase().includes(q));
+
+        const merged = new Map<string, { name: string; color: string }>();
+        [...fromApi, ...localMatches].forEach((item) => {
+          merged.set(item.name.toLowerCase(), item);
+        });
+        chips = Array.from(merged.values());
+      } else {
+        chips = chips.filter((c) => c.name.toLowerCase().includes(q));
+      }
     }
-    const addedNames = classSubjects.map((cs) => cs.subject_name.toLowerCase());
-    return chips.filter((chip) => !addedNames.includes(chip.name.toLowerCase())).slice(0, 12);
+
+    return chips
+      .filter((chip) => !addedNames.includes(chip.name.toLowerCase()))
+      .slice(0, 20);
   };
 
   const displayedChips = getDisplayedChips();
+
   const exactMatchExists =
     displayedChips.some((c) => c.name.toLowerCase() === subjectQuery.toLowerCase().trim()) ||
-    classSubjects.some((cs) => cs.subject_name.toLowerCase() === subjectQuery.toLowerCase().trim());
+    classSubjects.some(
+      (cs) => (cs.subject_name || "").toLowerCase() === subjectQuery.toLowerCase().trim()
+    ) ||
+    schoolSubjects.some((s) => {
+      const n = (s.subject_name || s.name || "").toLowerCase();
+      return n === subjectQuery.toLowerCase().trim();
+    });
 
-  const handleAddSubject = async (name: string, color: string = "#3B82F6", isCustom: boolean = false) => {
+  const handleAddSubject = async (
+    name: string,
+    color: string = "#3B82F6",
+    isCustom: boolean = false
+  ) => {
     if (!selectedClassId) {
       showToast("Please select a class first", "error");
       return;
@@ -579,7 +783,7 @@ export default function TimetableBuilderPage() {
       showToast(`${name} added!`, "success");
     } catch (error: any) {
       const msg = error.response?.data?.detail || error.message || "Failed to add subject";
-      showToast(msg, "error");
+      showToast(typeof msg === "string" ? msg : "Failed to add subject", "error");
     } finally {
       setIsAddingId(null);
     }
@@ -635,11 +839,15 @@ export default function TimetableBuilderPage() {
 
       try {
         const wRes = await api.get("/teacher-assignments/workload/all");
-        setWorkloads(wRes.data || []);
+        const wList = Array.isArray(wRes.data) ? wRes.data : wRes.data?.items || [];
+        setWorkloads(wList);
       } catch {}
 
       if (res.data?.is_overloaded) {
-        showToast(`${res.data.teacher_name} is overloaded (${res.data.current_workload}/30), but saved.`, "warning");
+        showToast(
+          `${res.data.teacher_name} is overloaded (${res.data.current_workload}/30), but saved.`,
+          "warning"
+        );
       } else {
         showToast(`Assigned to ${res.data.teacher_name}`, "success");
       }
@@ -701,7 +909,10 @@ export default function TimetableBuilderPage() {
   const handleDragStart = (e: React.DragEvent, periodNum: number, day: string) => {
     const cell = gridData.find((c) => c.period_num === periodNum && c.day === day);
     if (!cell || (!cell.subject_name && !cell.teacher_id)) return;
-    e.dataTransfer.setData("text/plain", JSON.stringify({ sourcePeriod: periodNum, sourceDay: day, cell }));
+    e.dataTransfer.setData(
+      "text/plain",
+      JSON.stringify({ sourcePeriod: periodNum, sourceDay: day, cell })
+    );
   };
 
   const handleDrop = (e: React.DragEvent, targetPeriod: number, targetDay: string) => {
@@ -715,7 +926,9 @@ export default function TimetableBuilderPage() {
       setGridData((prev) => {
         const targetCell = prev.find((c) => c.period_num === targetPeriod && c.day === targetDay);
         const nextGrid = prev.filter(
-          (c) => !(c.period_num === sourcePeriod && c.day === sourceDay) && !(c.period_num === targetPeriod && c.day === targetDay)
+          (c) =>
+            !(c.period_num === sourcePeriod && c.day === sourceDay) &&
+            !(c.period_num === targetPeriod && c.day === targetDay)
         );
         nextGrid.push({
           period_num: targetPeriod,
@@ -784,7 +997,9 @@ export default function TimetableBuilderPage() {
       return;
     }
     try {
-      await api.post(`/timetable-grid/clone?source_class_id=${selectedClassId}&source_section_id=${selectedSectionId}&target_class_id=${targetClassId}&target_section_id=${targetSectionId}`);
+      await api.post(
+        `/timetable-grid/clone?source_class_id=${selectedClassId}&source_section_id=${selectedSectionId}&target_class_id=${targetClassId}&target_section_id=${targetSectionId}`
+      );
       setIsCloneModalOpen(false);
       showToast("Grid cloned successfully!", "success");
     } catch (err) {
@@ -794,19 +1009,25 @@ export default function TimetableBuilderPage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6 text-slate-200">
-      {/* Toast Banner */}
       {toastNotice && (
-        <div className={`fixed bottom-5 right-5 z-50 p-4 rounded-xl shadow-lg border flex items-center gap-3 text-sm font-semibold transition-all ${
-          toastNotice.type === "success" ? "bg-emerald-950 text-emerald-200 border-emerald-800" :
-          toastNotice.type === "warning" ? "bg-amber-950 text-amber-200 border-amber-800" :
-          "bg-red-950 text-red-200 border-red-800"
-        }`}>
-          {toastNotice.type === "success" ? <Check className="w-5 h-5 text-emerald-400" /> : <AlertTriangle className="w-5 h-5 text-amber-400" />}
+        <div
+          className={`fixed bottom-5 right-5 z-50 p-4 rounded-xl shadow-lg border flex items-center gap-3 text-sm font-semibold transition-all ${
+            toastNotice.type === "success"
+              ? "bg-emerald-950 text-emerald-200 border-emerald-800"
+              : toastNotice.type === "warning"
+              ? "bg-amber-950 text-amber-200 border-amber-800"
+              : "bg-red-950 text-red-200 border-red-800"
+          }`}
+        >
+          {toastNotice.type === "success" ? (
+            <Check className="w-5 h-5 text-emerald-400" />
+          ) : (
+            <AlertTriangle className="w-5 h-5 text-amber-400" />
+          )}
           <span>{toastNotice.text}</span>
         </div>
       )}
 
-      {/* HEADER */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-white tracking-tight">Smart Timetable Builder</h1>
@@ -816,7 +1037,6 @@ export default function TimetableBuilderPage() {
         </div>
       </div>
 
-      {/* 3-TAB NAVIGATION */}
       <div className="flex bg-[#111827] border border-slate-800 p-1.5 rounded-xl w-fit shadow-sm overflow-x-auto">
         <button
           onClick={() => setActiveTab("subjects")}
@@ -850,7 +1070,6 @@ export default function TimetableBuilderPage() {
         </button>
       </div>
 
-      {/* GLOBAL SELECTORS */}
       <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 flex flex-wrap items-center gap-6 shadow-sm">
         <div className="flex-1 min-w-[200px] max-w-xs">
           <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
@@ -866,7 +1085,7 @@ export default function TimetableBuilderPage() {
             </option>
             {classes.map((cls) => (
               <option key={cls.id} value={cls.id}>
-                {cls.name}
+                {cls.name || cls.class_name}
               </option>
             ))}
           </select>
@@ -888,7 +1107,7 @@ export default function TimetableBuilderPage() {
             ) : (
               sections.map((sec) => (
                 <option key={sec.id} value={sec.id}>
-                  {sec.name}
+                  {sec.name || sec.section_name}
                 </option>
               ))
             )}
@@ -905,27 +1124,30 @@ export default function TimetableBuilderPage() {
         )}
       </div>
 
-      {/* TAB 1: SUBJECTS SETUP */}
+      {/* TAB 1 */}
       {activeTab === "subjects" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-1 space-y-4">
             <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 shadow-sm">
-              <h3 className="font-bold text-white mb-4">Quick Add Subjects</h3>
+              <h3 className="font-bold text-white mb-1">Quick Add Subjects</h3>
+              <p className="text-[11px] text-slate-500 mb-4">
+                Includes subjects from your Subject Master page (Dance, Drawing, etc.)
+              </p>
               <div className="relative mb-4">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Type to search or add custom..."
+                  placeholder="Search school subjects or add custom..."
                   value={subjectQuery}
                   onChange={(e) => setSubjectQuery(e.target.value)}
                   className="w-full pl-10 pr-4 py-2.5 bg-[#0f172a] border border-slate-700 text-white placeholder:text-slate-500 rounded-xl outline-none focus:border-blue-500"
                 />
               </div>
 
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 max-h-[280px] overflow-y-auto pr-1">
                 {displayedChips.map((chip, idx) => (
                   <button
-                    key={idx}
+                    key={`${chip.name}-${idx}`}
                     disabled={isAddingId === chip.name}
                     onClick={() => handleAddSubject(chip.name, chip.color)}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-sm text-slate-300 transition-colors disabled:opacity-50"
@@ -933,7 +1155,7 @@ export default function TimetableBuilderPage() {
                     {isAddingId === chip.name ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
                     ) : (
-                      <Plus className="w-3.5 h-3.5 text-slate-400" style={{ color: chip.color }} />
+                      <Plus className="w-3.5 h-3.5" style={{ color: chip.color }} />
                     )}
                     {chip.name}
                   </button>
@@ -950,15 +1172,22 @@ export default function TimetableBuilderPage() {
                     ) : (
                       <Plus className="w-3.5 h-3.5" />
                     )}
-                    Add "{subjectQuery.trim()}"
+                    Add &quot;{subjectQuery.trim()}&quot;
                   </button>
                 )}
               </div>
+
+              {displayedChips.length === 0 && subjectQuery.trim() === "" && (
+                <p className="text-xs text-slate-500 mt-3">
+                  No master subjects found yet. Create them on Subjects page, or type a custom name.
+                </p>
+              )}
 
               <div className="mt-5 p-3 bg-blue-900/10 border border-blue-900/30 rounded-lg flex items-start gap-2.5">
                 <AlertCircle className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                 <p className="text-xs text-slate-400 leading-relaxed">
                   Subjects are saved specifically for <strong>{getSelectedContextName()}</strong>.
+                  Master list is loaded from your school Subjects page.
                 </p>
               </div>
             </div>
@@ -998,11 +1227,11 @@ export default function TimetableBuilderPage() {
                         <div
                           className="w-9 h-9 rounded-lg flex items-center justify-center shadow-inner"
                           style={{
-                            backgroundColor: `${sub.color_code}20`,
-                            border: `1px solid ${sub.color_code}40`,
+                            backgroundColor: `${sub.color_code || "#3B82F6"}20`,
+                            border: `1px solid ${sub.color_code || "#3B82F6"}40`,
                           }}
                         >
-                          <BookOpen className="w-4 h-4" style={{ color: sub.color_code }} />
+                          <BookOpen className="w-4 h-4" style={{ color: sub.color_code || "#3B82F6" }} />
                         </div>
                         <div>
                           <p className="text-sm font-bold text-slate-200">{sub.subject_name}</p>
@@ -1015,11 +1244,9 @@ export default function TimetableBuilderPage() {
                               >
                                 <Minus className="w-3 h-3" />
                               </button>
-
                               <span className="text-xs font-bold text-blue-400 min-w-[50px] text-center">
                                 {updatingId === sub.id ? "..." : `${sub.periods_per_week} / wk`}
                               </span>
-
                               <button
                                 onClick={() => handleUpdatePeriods(sub.id, sub.periods_per_week, 1)}
                                 disabled={updatingId === sub.id || sub.periods_per_week >= 20}
@@ -1047,7 +1274,7 @@ export default function TimetableBuilderPage() {
         </div>
       )}
 
-      {/* TAB 2: ASSIGN TEACHERS */}
+      {/* TAB 2 */}
       {activeTab === "teachers" && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2">
@@ -1102,7 +1329,8 @@ export default function TimetableBuilderPage() {
                       return tSubjs.some((ts) => matchSubjects(sub.subject_name, ts));
                     });
 
-                    const dropdownTeachers = matchingTeachers.length > 0 ? matchingTeachers : teachers;
+                    const dropdownTeachers =
+                      matchingTeachers.length > 0 ? matchingTeachers : teachers;
 
                     return (
                       <div
@@ -1117,19 +1345,18 @@ export default function TimetableBuilderPage() {
                           <div
                             className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
                             style={{
-                              backgroundColor: `${sub.color_code}25`,
-                              border: `1px solid ${sub.color_code}50`,
+                              backgroundColor: `${sub.color_code || "#3B82F6"}25`,
+                              border: `1px solid ${sub.color_code || "#3B82F6"}50`,
                             }}
                           >
-                            <BookOpen className="w-4 h-4" style={{ color: sub.color_code }} />
+                            <BookOpen
+                              className="w-4 h-4"
+                              style={{ color: sub.color_code || "#3B82F6" }}
+                            />
                           </div>
                           <div className="min-w-0">
-                            <p className="text-sm font-bold text-white truncate">
-                              {sub.subject_name}
-                            </p>
-                            <p className="text-xs text-slate-400">
-                              {sub.periods_per_week} periods/week
-                            </p>
+                            <p className="text-sm font-bold text-white truncate">{sub.subject_name}</p>
+                            <p className="text-xs text-slate-400">{sub.periods_per_week} periods/week</p>
                           </div>
                           {!assigned && (
                             <span className="text-[10px] uppercase tracking-wide font-semibold text-amber-400 bg-amber-900/30 border border-amber-800/50 px-2 py-0.5 rounded">
@@ -1156,7 +1383,8 @@ export default function TimetableBuilderPage() {
                                 const tag = tSubjs.length > 0 ? ` (${tSubjs.join(", ")})` : "";
                                 return (
                                   <option key={t.id} value={realTeacherId}>
-                                    {teacherName(t)}{tag}
+                                    {teacherName(t)}
+                                    {tag}
                                   </option>
                                 );
                               })}
@@ -1191,17 +1419,18 @@ export default function TimetableBuilderPage() {
                   {teachers.map((t) => {
                     const tid = t.user_id || t.user?.id || t.id;
                     const sid = t.id;
-                    const w = workloads.find(
-                      (item: any) =>
-                        item.teacher_id === tid ||
-                        item.staff_id === sid ||
-                        item.teacher_id === sid
-                    ) || {
-                      teacher_id: tid,
-                      teacher_name: teacherName(t),
-                      total_periods: 0,
-                      max_periods: MAX_PERIODS,
-                    };
+                    const w =
+                      workloads.find(
+                        (item: any) =>
+                          item.teacher_id === tid ||
+                          item.staff_id === sid ||
+                          item.teacher_id === sid
+                      ) || {
+                        teacher_id: tid,
+                        teacher_name: teacherName(t),
+                        total_periods: 0,
+                        max_periods: MAX_PERIODS,
+                      };
 
                     const periods = w.total_periods || 0;
                     const maxP = w.max_periods || MAX_PERIODS;
@@ -1227,9 +1456,7 @@ export default function TimetableBuilderPage() {
                         }`}
                       >
                         <div className="flex items-center justify-between mb-1">
-                          <p className="text-sm font-bold text-white truncate pr-2">
-                            {teacherName(t)}
-                          </p>
+                          <p className="text-sm font-bold text-white truncate pr-2">{teacherName(t)}</p>
                           <span
                             className={`text-xs font-bold shrink-0 ${
                               isOver ? "text-red-400" : "text-slate-400"
@@ -1273,10 +1500,9 @@ export default function TimetableBuilderPage() {
         </div>
       )}
 
-      {/* TAB 3: SMART DRAG & DROP GRID BUILDER */}
+      {/* TAB 3 */}
       {activeTab === "timetable" && (
         <div className="bg-[#111827] rounded-2xl shadow-sm border border-slate-800 overflow-hidden flex flex-col">
-          {/* Grid Toolbar */}
           <div className="p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-4 bg-slate-900/50">
             <div className="flex items-center gap-3">
               <button
@@ -1323,9 +1549,16 @@ export default function TimetableBuilderPage() {
               <table className="w-full border-collapse min-w-[900px]">
                 <thead>
                   <tr className="bg-slate-800 text-slate-300 text-xs font-bold uppercase tracking-wider">
-                    <th className="p-4 text-left border-r border-slate-700 rounded-tl-xl w-44">Time / Period</th>
+                    <th className="p-4 text-left border-r border-slate-700 rounded-tl-xl w-44">
+                      Time / Period
+                    </th>
                     {slotConfig.working_days.map((day, idx) => (
-                      <th key={day} className={`p-4 text-center border-slate-700 ${idx !== slotConfig.working_days.length - 1 ? 'border-r' : 'rounded-tr-xl'} min-w-[160px]`}>
+                      <th
+                        key={day}
+                        className={`p-4 text-center border-slate-700 ${
+                          idx !== slotConfig.working_days.length - 1 ? "border-r" : "rounded-tr-xl"
+                        } min-w-[160px]`}
+                      >
                         {day}
                       </th>
                     ))}
@@ -1333,11 +1566,15 @@ export default function TimetableBuilderPage() {
                 </thead>
                 <tbody className="divide-y divide-slate-700 border-l border-r border-b border-slate-700 rounded-b-xl">
                   {slotConfig.period_slots.map((slot) => {
-                    const isBreakOrLunch = slot.slot_type !== 'CLASS';
+                    const isBreakOrLunch = slot.slot_type !== "CLASS";
 
                     return (
-                      <tr key={slot.period_num} className={isBreakOrLunch ? 'bg-amber-950/20' : 'hover:bg-slate-800/30 transition'}>
-                        {/* Time Column */}
+                      <tr
+                        key={slot.period_num}
+                        className={
+                          isBreakOrLunch ? "bg-amber-950/20" : "hover:bg-slate-800/30 transition"
+                        }
+                      >
                         <td className="p-4 border-r border-slate-700 bg-slate-900/40">
                           <div className="font-bold text-sm text-slate-200">{slot.name}</div>
                           <div className="text-xs text-slate-400 font-medium flex items-center gap-1 mt-0.5">
@@ -1351,23 +1588,34 @@ export default function TimetableBuilderPage() {
                           )}
                         </td>
 
-                        {/* Days Cells */}
                         {slotConfig.working_days.map((day) => {
                           if (isBreakOrLunch) {
                             return (
-                              <td key={`${day}-${slot.period_num}`} className="p-3 text-center border-r border-slate-700 text-xs font-semibold text-amber-500 italic bg-amber-950/10">
+                              <td
+                                key={`${day}-${slot.period_num}`}
+                                className="p-3 text-center border-r border-slate-700 text-xs font-semibold text-amber-500 italic bg-amber-950/10"
+                              >
                                 {slot.name}
                               </td>
                             );
                           }
 
-                          const cell = gridData.find((c) => c.period_num === slot.period_num && c.day === day) || {
-                            period_num: slot.period_num,
-                            day,
-                          };
+                          const cell =
+                            gridData.find(
+                              (c) => c.period_num === slot.period_num && c.day === day
+                            ) || {
+                              period_num: slot.period_num,
+                              day,
+                            };
 
-                          const teacherClashList = cell.teacher_id ? teacherClashes[cell.teacher_id] : null;
-                          const hasClash = teacherClashList && teacherClashList.some((cl) => cl.period_num === slot.period_num && cl.day === day);
+                          const teacherClashList = cell.teacher_id
+                            ? teacherClashes[cell.teacher_id]
+                            : null;
+                          const hasClash =
+                            teacherClashList &&
+                            teacherClashList.some(
+                              (cl) => cl.period_num === slot.period_num && cl.day === day
+                            );
 
                           return (
                             <td
@@ -1375,7 +1623,9 @@ export default function TimetableBuilderPage() {
                               onDragOver={(e) => e.preventDefault()}
                               onDrop={(e) => handleDrop(e, slot.period_num, day)}
                               className={`p-2.5 border-r border-slate-700 relative transition ${
-                                hasClash ? 'bg-red-950/30' : 'bg-[#0f172a]/50 hover:bg-slate-800'
+                                hasClash
+                                  ? "bg-red-950/30"
+                                  : "bg-[#0f172a]/50 hover:bg-slate-800"
                               }`}
                             >
                               <div
@@ -1384,8 +1634,15 @@ export default function TimetableBuilderPage() {
                                 className="space-y-2 cursor-grab active:cursor-grabbing"
                               >
                                 <select
-                                  value={cell.subject_name || ''}
-                                  onChange={(e) => handleCellUpdate(slot.period_num, day, 'subject_name', e.target.value)}
+                                  value={cell.subject_name || ""}
+                                  onChange={(e) =>
+                                    handleCellUpdate(
+                                      slot.period_num,
+                                      day,
+                                      "subject_name",
+                                      e.target.value
+                                    )
+                                  }
                                   className="w-full text-xs font-semibold px-2 py-1.5 bg-[#111827] border border-slate-700 rounded text-slate-200 focus:outline-none focus:border-blue-500"
                                 >
                                   <option value="">-- Subject --</option>
@@ -1397,17 +1654,27 @@ export default function TimetableBuilderPage() {
                                 </select>
 
                                 <select
-                                  value={cell.teacher_id || ''}
-                                  onChange={(e) => handleCellUpdate(slot.period_num, day, 'teacher_id', e.target.value)}
+                                  value={cell.teacher_id || ""}
+                                  onChange={(e) =>
+                                    handleCellUpdate(
+                                      slot.period_num,
+                                      day,
+                                      "teacher_id",
+                                      e.target.value
+                                    )
+                                  }
                                   className={`w-full text-xs px-2 py-1.5 border rounded focus:outline-none ${
                                     hasClash
-                                      ? 'bg-red-900/20 border-red-500/50 text-red-300 font-bold focus:border-red-500'
-                                      : 'bg-[#111827] border-slate-700 text-slate-300 focus:border-blue-500'
+                                      ? "bg-red-900/20 border-red-500/50 text-red-300 font-bold focus:border-red-500"
+                                      : "bg-[#111827] border-slate-700 text-slate-300 focus:border-blue-500"
                                   }`}
                                 >
                                   <option value="">-- Teacher --</option>
                                   {teachers.map((t) => (
-                                    <option key={t.id} value={t.id || t.user_id || t.user?.id}>
+                                    <option
+                                      key={t.id}
+                                      value={t.id || t.user_id || t.user?.id}
+                                    >
                                       {teacherName(t)}
                                     </option>
                                   ))}
@@ -1442,17 +1709,25 @@ export default function TimetableBuilderPage() {
                 <Clock className="w-5 h-5 text-blue-400" />
                 Configure Time Slots
               </h3>
-              <button onClick={() => setIsConfigModalOpen(false)} className="text-slate-400 hover:text-white">
+              <button
+                onClick={() => setIsConfigModalOpen(false)}
+                className="text-slate-400 hover:text-white"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <div className="p-6 overflow-y-auto space-y-6">
               <div>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Period Slots</h4>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">
+                  Period Slots
+                </h4>
                 <div className="space-y-3">
                   {slotConfig.period_slots.map((slot, idx) => (
-                    <div key={slot.period_num} className="flex items-center gap-3 p-3 bg-slate-800/30 rounded-xl border border-slate-700/50">
+                    <div
+                      key={slot.period_num}
+                      className="flex items-center gap-3 p-3 bg-slate-800/30 rounded-xl border border-slate-700/50"
+                    >
                       <span className="w-7 h-7 flex items-center justify-center bg-blue-900/30 text-blue-400 rounded-lg text-xs font-bold border border-blue-800/30">
                         #{slot.period_num}
                       </span>
@@ -1497,7 +1772,7 @@ export default function TimetableBuilderPage() {
                         value={slot.slot_type}
                         onChange={(e) => {
                           const updated = [...slotConfig.period_slots];
-                          updated[idx].slot_type = e.target.value as 'CLASS' | 'BREAK' | 'LUNCH';
+                          updated[idx].slot_type = e.target.value as "CLASS" | "BREAK" | "LUNCH";
                           setSlotConfig({ ...slotConfig, period_slots: updated });
                         }}
                         className="text-xs font-semibold px-2 py-1.5 border border-slate-700 rounded-lg bg-[#0f172a] text-white focus:outline-none"
@@ -1527,7 +1802,13 @@ export default function TimetableBuilderPage() {
                       ...slotConfig,
                       period_slots: [
                         ...slotConfig.period_slots,
-                        { period_num: nextNum, name: `Period ${nextNum}`, start_time: '13:30', end_time: '14:15', slot_type: 'CLASS' },
+                        {
+                          period_num: nextNum,
+                          name: `Period ${nextNum}`,
+                          start_time: "13:30",
+                          end_time: "14:15",
+                          slot_type: "CLASS",
+                        },
                       ],
                     });
                   }}
@@ -1551,7 +1832,11 @@ export default function TimetableBuilderPage() {
                 disabled={isSavingConfig}
                 className="px-5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition flex items-center gap-2"
               >
-                {isSavingConfig ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                {isSavingConfig ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Save className="w-3.5 h-3.5" />
+                )}
                 Save Configuration
               </button>
             </div>
@@ -1559,7 +1844,7 @@ export default function TimetableBuilderPage() {
         </div>
       )}
 
-      {/* CLONE GRID MODAL */}
+      {/* CLONE MODAL */}
       {isCloneModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#111827] rounded-2xl shadow-xl max-w-md w-full p-6 border border-slate-800 space-y-4">
@@ -1581,13 +1866,17 @@ export default function TimetableBuilderPage() {
                 >
                   <option value="">-- Choose Class --</option>
                   {classes.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
+                    <option key={c.id} value={c.id}>
+                      {c.name || c.class_name}
+                    </option>
                   ))}
                 </select>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Target Section</label>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">
+                  Target Section
+                </label>
                 <select
                   value={targetSectionId}
                   onChange={(e) => setTargetSectionId(e.target.value)}
@@ -1595,7 +1884,9 @@ export default function TimetableBuilderPage() {
                 >
                   <option value="">-- Choose Section --</option>
                   {sections.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
+                    <option key={s.id} value={s.id}>
+                      {s.name || s.section_name}
+                    </option>
                   ))}
                 </select>
               </div>
