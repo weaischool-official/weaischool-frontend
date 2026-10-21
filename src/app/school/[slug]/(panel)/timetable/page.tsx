@@ -17,6 +17,12 @@ import {
   UserCheck,
   Loader2,
   AlertTriangle,
+  Settings,
+  Save,
+  RefreshCw,
+  X,
+  Clock,
+  GripVertical
 } from "lucide-react";
 
 const QUICK_SUBJECTS = [
@@ -47,10 +53,8 @@ const matchSubjects = (classSubjectName: string, teacherSubjectName: string): bo
 
   if (!normClass || !normTeacher) return false;
 
-  // Direct exact match
   if (normClass === normTeacher) return true;
 
-  // Discrete Synonym Groups
   const synonymGroups: string[][] = [
     ["mathematics", "maths", "math", "quantitative"],
     ["informationtechnology", "it", "computer", "computers", "computerscience", "cs", "ip"],
@@ -187,6 +191,15 @@ export default function TimetableBuilderPage() {
   const [isLoadingTeachers, setIsLoadingTeachers] = useState(false);
   const [assigningId, setAssigningId] = useState<string | null>(null);
 
+  // Tab 3 states
+  const [isLoadingGrid, setIsLoadingGrid] = useState(false);
+  const [timeConfig, setTimeConfig] = useState<any>(null);
+  const [gridData, setGridData] = useState<any[]>([]);
+  const [isTimeModalOpen, setIsTimeModalOpen] = useState(false);
+  const [tempTimeConfig, setTempTimeConfig] = useState<any>(null);
+  const [clashWarnings, setClashWarnings] = useState<Record<string, string>>({});
+  const [isSavingGrid, setIsSavingGrid] = useState(false);
+
   const getSelectedContextName = () => {
     const clsName = classes.find((c) => c.id === selectedClassId)?.name || "";
     const secName = sections.find((s) => s.id === selectedSectionId)?.name || "";
@@ -300,11 +313,11 @@ export default function TimetableBuilderPage() {
     return () => clearTimeout(debounce);
   }, [subjectQuery]);
 
-  // 5. Load Teachers + Assignments + Workloads when Tab 2 opens
+  // 5. Load Teachers + Assignments + Workloads when Tab 2 or 3 opens
   useEffect(() => {
-    if (activeTab !== "teachers" || !selectedClassId) return;
+    if ((activeTab !== "teachers" && activeTab !== "timetable") || !selectedClassId) return;
 
-    const loadTab2 = async () => {
+    const loadData = async () => {
       setIsLoadingTeachers(true);
       try {
         let teacherList: any[] = [];
@@ -321,7 +334,6 @@ export default function TimetableBuilderPage() {
           }
         }
 
-        // Fetch full profile details for all teachers to ensure extras are loaded
         const enrichedTeachers = await Promise.all(
           teacherList.map(async (t) => {
             const staffId = t.id || t.user_id || t.user?.id;
@@ -334,7 +346,6 @@ export default function TimetableBuilderPage() {
             }
           })
         );
-
         setTeachers(enrichedTeachers);
 
         try {
@@ -362,7 +373,31 @@ export default function TimetableBuilderPage() {
       }
     };
 
-    loadTab2();
+    loadData();
+  }, [activeTab, selectedClassId, selectedSectionId]);
+
+  // 6. Load Tab 3 Grid Data
+  useEffect(() => {
+    if (activeTab !== "timetable" || !selectedClassId) return;
+    const loadGrid = async () => {
+      setIsLoadingGrid(true);
+      try {
+        const tcRes = await api.get(
+          `/timetable-grid/time-config?class_id=${selectedClassId}&section=${selectedSectionId}`
+        );
+        setTimeConfig(tcRes.data);
+
+        const gridRes = await api.get(
+          `/timetable-grid/grid?class_id=${selectedClassId}&section=${selectedSectionId}`
+        );
+        setGridData(gridRes.data || []);
+      } catch (error) {
+        toast.error("Failed to load timetable grid");
+      } finally {
+        setIsLoadingGrid(false);
+      }
+    };
+    loadGrid();
   }, [activeTab, selectedClassId, selectedSectionId]);
 
   const getDisplayedChips = () => {
@@ -509,6 +544,137 @@ export default function TimetableBuilderPage() {
   const assignedCount = useMemo(() => {
     return classSubjects.filter((s) => assignments[s.id]?.teacher_id).length;
   }, [classSubjects, assignments]);
+
+  // ================= TAB 3 DRAG & DROP & GRID LOGIC =================
+
+  const handleDragStart = (e: React.DragEvent, subjectId: string) => {
+    e.dataTransfer.setData("subject_id", subjectId);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDrop = async (e: React.DragEvent, day: string, periodNumber: number) => {
+    e.preventDefault();
+    const subjectId = e.dataTransfer.getData("subject_id");
+    if (!subjectId) return;
+
+    const sub = classSubjects.find((s) => s.id === subjectId);
+    if (!sub) return;
+
+    const assigned = assignments[subjectId];
+    const teacherId = assigned ? getAssignedTeacherValue(assigned) : null;
+    let teacherNameStr = null;
+    
+    if (teacherId) {
+      const t = teachers.find((t) => (t.id || t.user_id || t.user?.id) === teacherId);
+      teacherNameStr = t ? teacherName(t) : null;
+    }
+
+    const newEntry = {
+      day_of_week: day,
+      period_number: periodNumber,
+      subject_id: sub.id,
+      subject_name: sub.subject_name,
+      teacher_id: teacherId || null,
+      teacher_name: teacherNameStr,
+      slot_type: "CLASS",
+      color_code: sub.color_code
+    };
+
+    setGridData((prev) => {
+      const filtered = prev.filter((g) => !(g.day_of_week === day && g.period_number === periodNumber));
+      return [...filtered, newEntry];
+    });
+
+    if (teacherId) {
+      try {
+        const res = await api.post("/timetable-grid/check-clash", {
+          teacher_id: teacherId,
+          day_of_week: day,
+          period_number: periodNumber,
+        });
+        if (res.data.has_clash) {
+          toast.error(res.data.message);
+          setClashWarnings((prev) => ({ ...prev, [`${day}-${periodNumber}`]: res.data.message }));
+        } else {
+          setClashWarnings((prev) => {
+            const clone = { ...prev };
+            delete clone[`${day}-${periodNumber}`];
+            return clone;
+          });
+        }
+      } catch (err) {
+        console.error("Clash check failed", err);
+      }
+    }
+  };
+
+  const handleRemoveCell = (day: string, periodNumber: number) => {
+    setGridData((prev) => prev.filter((g) => !(g.day_of_week === day && g.period_number === periodNumber)));
+    setClashWarnings((prev) => {
+      const clone = { ...prev };
+      delete clone[`${day}-${periodNumber}`];
+      return clone;
+    });
+  };
+
+  const handleBulkSave = async () => {
+    setIsSavingGrid(true);
+    try {
+      const payload = {
+        class_id: selectedClassId,
+        section: selectedSectionId,
+        entries: gridData,
+        replace_all: true,
+      };
+      const res = await api.post("/timetable-grid/grid/bulk-save", payload);
+      toast.success(res.data.message || "Timetable saved successfully");
+    } catch (e: any) {
+      const msg = e.response?.data?.detail || "Failed to save timetable";
+      toast.error(typeof msg === "string" ? msg : "Error saving");
+    } finally {
+      setIsSavingGrid(false);
+    }
+  };
+
+  const handleClearGrid = async () => {
+    if (!confirm("Are you sure you want to clear the entire grid?")) return;
+    try {
+      await api.delete(`/timetable-grid/grid?class_id=${selectedClassId}&section=${selectedSectionId}`);
+      setGridData([]);
+      setClashWarnings({});
+      toast.success("Grid cleared");
+    } catch (e) {
+      toast.error("Failed to clear grid");
+    }
+  };
+
+  const openTimeConfigModal = () => {
+    setTempTimeConfig(
+      timeConfig || {
+        working_days: ["MON", "TUE", "WED", "THU", "FRI", "SAT"],
+        period_slots: [],
+      }
+    );
+    setIsTimeModalOpen(true);
+  };
+
+  const saveTimeConfig = async () => {
+    try {
+      const payload = {
+        working_days: tempTimeConfig.working_days,
+        period_slots: tempTimeConfig.period_slots,
+        class_id: selectedClassId,
+        section: selectedSectionId,
+        apply_to_all: false,
+      };
+      const res = await api.post("/timetable-grid/time-config", payload);
+      setTimeConfig(res.data);
+      setIsTimeModalOpen(false);
+      toast.success("Time configuration saved");
+    } catch (e) {
+      toast.error("Failed to save time config");
+    }
+  };
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6 text-slate-200">
@@ -660,13 +826,6 @@ export default function TimetableBuilderPage() {
                   </button>
                 )}
               </div>
-
-              <div className="mt-5 p-3 bg-blue-900/10 border border-blue-900/30 rounded-lg flex items-start gap-2.5">
-                <AlertCircle className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  Subjects are saved specifically for <strong>{getSelectedContextName()}</strong>.
-                </p>
-              </div>
             </div>
           </div>
 
@@ -675,7 +834,7 @@ export default function TimetableBuilderPage() {
               <h3 className="font-bold text-white flex items-center justify-between mb-5">
                 <span className="flex items-center gap-2">
                   <BookOpen className="w-4 h-4 text-blue-400" />
-                  Configured Subjects for {getSelectedContextName()}
+                  Configured Subjects
                 </span>
                 <span className="text-xs font-semibold bg-slate-800 text-slate-300 px-3 py-1 rounded-full border border-slate-700">
                   Total: {classSubjects.length}
@@ -688,10 +847,7 @@ export default function TimetableBuilderPage() {
                 </div>
               ) : classSubjects.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-slate-500 border-2 border-dashed border-slate-800 rounded-xl">
-                  <p className="text-sm font-medium text-slate-300">
-                    No subjects configured for this section
-                  </p>
-                  <p className="text-xs mt-1">Click a chip on the left to add subjects.</p>
+                  <p className="text-sm font-medium text-slate-300">No subjects configured</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -721,11 +877,9 @@ export default function TimetableBuilderPage() {
                               >
                                 <Minus className="w-3 h-3" />
                               </button>
-
                               <span className="text-xs font-bold text-blue-400 min-w-[50px] text-center">
                                 {updatingId === sub.id ? "..." : `${sub.periods_per_week} / wk`}
                               </span>
-
                               <button
                                 onClick={() => handleUpdatePeriods(sub.id, sub.periods_per_week, 1)}
                                 disabled={updatingId === sub.id || sub.periods_per_week >= 20}
@@ -737,7 +891,6 @@ export default function TimetableBuilderPage() {
                           </div>
                         </div>
                       </div>
-
                       <button
                         onClick={() => handleDeleteSubject(sub.id, sub.subject_name)}
                         className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-950/30 rounded-lg transition-all"
@@ -761,7 +914,7 @@ export default function TimetableBuilderPage() {
               <div className="flex items-center justify-between mb-5">
                 <h3 className="font-bold text-white flex items-center gap-2">
                   <UserCheck className="w-4 h-4 text-blue-400" />
-                  Assign Teachers - {getSelectedContextName()}
+                  Assign Teachers
                 </h3>
                 <span
                   className={`text-xs font-semibold px-3 py-1 rounded-full border ${
@@ -781,20 +934,12 @@ export default function TimetableBuilderPage() {
               ) : classSubjects.length === 0 ? (
                 <div className="flex flex-col items-center py-16 text-slate-500 border-2 border-dashed border-slate-800 rounded-xl">
                   <BookOpen className="w-10 h-10 mb-3 text-slate-600" />
-                  <p className="text-sm text-slate-300 font-medium">No subjects in this section</p>
-                  <p className="text-xs mt-1 mb-4">Add subjects first in Tab 1</p>
-                  <button
-                    onClick={() => setActiveTab("subjects")}
-                    className="text-blue-400 text-sm hover:underline"
-                  >
-                    Go to Subjects Setup
-                  </button>
+                  <p className="text-sm text-slate-300 font-medium">No subjects found</p>
                 </div>
               ) : teachers.length === 0 ? (
                 <div className="flex flex-col items-center py-16 text-slate-500 border-2 border-dashed border-slate-800 rounded-xl">
                   <Users className="w-10 h-10 mb-3 text-slate-600" />
                   <p className="text-sm text-slate-300 font-medium">No teachers found</p>
-                  <p className="text-xs mt-1">Add teachers from Staff page first</p>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -803,18 +948,12 @@ export default function TimetableBuilderPage() {
                     const isAssigning = assigningId === sub.id;
                     const selectedVal = getAssignedTeacherValue(assigned);
 
-                    // Filter matching teachers based on profile subjects
                     const matchingTeachers = teachers.filter((t) => {
                       const tSubjs = getTeacherSubjects(t);
                       return tSubjs.some((ts) => matchSubjects(sub.subject_name, ts));
                     });
 
-                    // If matching teachers exist, show them. Otherwise show ALL available teachers so admin can assign easily
                     const dropdownTeachers = matchingTeachers.length > 0 ? matchingTeachers : teachers;
-
-                    const assignedTeacherObj = selectedVal
-                      ? teachers.find((t) => (t.id || t.user_id || t.user?.id) === selectedVal)
-                      : null;
 
                     return (
                       <div
@@ -843,11 +982,6 @@ export default function TimetableBuilderPage() {
                               {sub.periods_per_week} periods/week
                             </p>
                           </div>
-                          {!assigned && (
-                            <span className="text-[10px] uppercase tracking-wide font-semibold text-amber-400 bg-amber-900/30 border border-amber-800/50 px-2 py-0.5 rounded">
-                              Needed
-                            </span>
-                          )}
                         </div>
 
                         <div className="flex items-center gap-2 sm:w-[260px]">
@@ -862,16 +996,11 @@ export default function TimetableBuilderPage() {
                               className="w-full bg-[#0f172a] border border-slate-600 text-white text-sm rounded-lg px-3 py-2.5 outline-none focus:border-blue-500"
                             >
                               <option value="">-- Select Teacher --</option>
-                              {dropdownTeachers.map((t) => {
-                                const realTeacherId = t.id || t.user_id || t.user?.id;
-                                const tSubjs = getTeacherSubjects(t);
-                                const tag = tSubjs.length > 0 ? ` (${tSubjs.join(", ")})` : "";
-                                return (
-                                  <option key={t.id} value={realTeacherId}>
-                                    {teacherName(t)}{tag}
-                                  </option>
-                                );
-                              })}
+                              {dropdownTeachers.map((t) => (
+                                <option key={t.id} value={t.id || t.user_id || t.user?.id}>
+                                  {teacherName(t)} {getTeacherSubjects(t).length > 0 ? `(${getTeacherSubjects(t).join(",")})` : ""}
+                                </option>
+                              ))}
                             </select>
                           )}
                         </div>
@@ -883,100 +1012,44 @@ export default function TimetableBuilderPage() {
             </div>
           </div>
 
-          {/* RIGHT: Workload panel with transparent profile subject status */}
           <div className="lg:col-span-1">
             <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 sticky top-4">
               <h3 className="font-bold text-white flex items-center gap-2 mb-1">
-                <Users className="w-4 h-4 text-blue-400" /> Teacher Workload & Profiles
+                <Users className="w-4 h-4 text-blue-400" /> Teacher Workload
               </h3>
-              <p className="text-xs text-slate-500 mb-4">
-                Max {MAX_PERIODS} periods/week · Configured Subjects
-              </p>
-
+              <p className="text-xs text-slate-500 mb-4">Max {MAX_PERIODS} periods/week</p>
+              
               {isLoadingTeachers ? (
                 <div className="flex justify-center py-10">
                   <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
                 </div>
               ) : workloads.length === 0 && teachers.length === 0 ? (
-                <p className="text-sm text-slate-500 text-center py-8">No teacher data</p>
+                <p className="text-sm text-slate-500 text-center py-8">No data</p>
               ) : (
                 <div className="space-y-3 max-h-[480px] overflow-y-auto pr-1">
                   {teachers.map((t) => {
                     const tid = t.user_id || t.user?.id || t.id;
-                    const sid = t.id;
                     const w = workloads.find(
-                      (item: any) =>
-                        item.teacher_id === tid ||
-                        item.staff_id === sid ||
-                        item.teacher_id === sid
-                    ) || {
-                      teacher_id: tid,
-                      teacher_name: teacherName(t),
-                      total_periods: 0,
-                      max_periods: MAX_PERIODS,
-                    };
+                      (item: any) => item.teacher_id === tid || item.staff_id === t.id
+                    ) || { total_periods: 0, max_periods: MAX_PERIODS };
 
                     const periods = w.total_periods || 0;
                     const maxP = w.max_periods || MAX_PERIODS;
                     const pct = Math.min(100, Math.round((periods / maxP) * 100));
                     const isOver = periods > maxP;
-                    const barColor = isOver
-                      ? "bg-red-500"
-                      : pct >= 80
-                      ? "bg-amber-500"
-                      : pct >= 50
-                      ? "bg-blue-500"
-                      : "bg-emerald-500";
-
-                    const tSubjects = getTeacherSubjects(t);
-
+                    
                     return (
                       <div
                         key={t.id}
-                        className={`p-3 rounded-xl border ${
-                          isOver
-                            ? "border-red-800/50 bg-red-950/20"
-                            : "border-slate-700/50 bg-slate-800/30"
-                        }`}
+                        className={`p-3 rounded-xl border ${isOver ? "border-red-800/50 bg-red-950/20" : "border-slate-700/50 bg-slate-800/30"}`}
                       >
                         <div className="flex items-center justify-between mb-1">
-                          <p className="text-sm font-bold text-white truncate pr-2">
-                            {teacherName(t)}
-                          </p>
-                          <span
-                            className={`text-xs font-bold shrink-0 ${
-                              isOver ? "text-red-400" : "text-slate-400"
-                            }`}
-                          >
-                            {periods}/{maxP}
-                          </span>
+                          <p className="text-sm font-bold text-white truncate pr-2">{teacherName(t)}</p>
+                          <span className={`text-xs font-bold ${isOver ? "text-red-400" : "text-slate-400"}`}>{periods}/{maxP}</span>
                         </div>
-
-                        {/* EXPLICIT PROFILE SUBJECT DISPLAY */}
-                        <div className="text-[11px] mb-2 font-medium">
-                          {tSubjects.length > 0 ? (
-                            <span className="text-emerald-400 bg-emerald-950/40 border border-emerald-800/40 px-2 py-0.5 rounded inline-block truncate max-w-full">
-                              {tSubjects.join(", ")}
-                            </span>
-                          ) : (
-                            <span className="text-slate-400 bg-slate-900 border border-slate-700 px-2 py-0.5 rounded inline-block">
-                              General Staff
-                            </span>
-                          )}
-                        </div>
-
                         <div className="h-1.5 bg-slate-900 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all ${barColor}`}
-                            style={{ width: `${Math.min(pct, 100)}%` }}
-                          />
+                          <div className={`h-full rounded-full ${isOver ? "bg-red-500" : "bg-blue-500"}`} style={{ width: `${pct}%` }} />
                         </div>
-
-                        {isOver && (
-                          <p className="text-[10px] text-red-400 mt-1.5 flex items-center gap-1">
-                            <AlertTriangle className="w-3 h-3" /> Over {maxP} periods
-                          </p>
-                        )}
                       </div>
                     );
                   })}
@@ -987,20 +1060,334 @@ export default function TimetableBuilderPage() {
         </div>
       )}
 
-      {/* TAB 3: PLACEHOLDER */}
+      {/* TAB 3: BUILD GRID */}
       {activeTab === "timetable" && (
-        <div className="bg-[#111827] p-12 rounded-2xl border border-slate-800 text-center">
-          <CalendarDays className="w-12 h-12 text-slate-600 mx-auto mb-4" />
-          <p className="text-slate-300 font-medium">Step 3: Drag & Drop Grid Builder</p>
-          <p className="text-slate-500 text-sm mt-2 max-w-md mx-auto">
-            After subjects + teachers are set, you will build the weekly grid with clash detection here.
-          </p>
-          <button
-            onClick={() => setActiveTab("teachers")}
-            className="mt-5 text-blue-400 font-medium text-sm hover:underline"
-          >
-            Back to Assign Teachers
-          </button>
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <CalendarDays className="w-5 h-5 text-blue-400" /> Grid Builder
+            </h2>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={openTimeConfigModal}
+                className="flex items-center gap-1.5 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-all"
+              >
+                <Settings className="w-4 h-4" /> Time Slots
+              </button>
+              <button
+                onClick={handleClearGrid}
+                className="flex items-center gap-1.5 px-4 py-2 bg-red-950/30 hover:bg-red-900/50 border border-red-900 text-red-400 rounded-lg text-sm font-medium transition-all"
+              >
+                <Trash2 className="w-4 h-4" /> Clear
+              </button>
+              <button
+                onClick={handleBulkSave}
+                disabled={isSavingGrid}
+                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-all disabled:opacity-50"
+              >
+                {isSavingGrid ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Save Timetable
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-col lg:flex-row gap-6">
+            {/* LEFT PANEL: DRAGGABLE CHIPS */}
+            <div className="w-full lg:w-72 shrink-0 bg-[#111827] border border-slate-800 rounded-2xl p-4 self-start">
+              <h3 className="font-semibold text-white mb-3 flex items-center justify-between">
+                <span>Subjects</span>
+                <span className="text-xs text-slate-400 bg-slate-800 px-2 py-0.5 rounded">{classSubjects.length} items</span>
+              </h3>
+              <p className="text-xs text-slate-500 mb-4">Drag and drop these subjects into the grid cells.</p>
+              
+              <div className="space-y-3">
+                {classSubjects.map(sub => {
+                  const assigned = assignments[sub.id];
+                  const teacherId = assigned ? getAssignedTeacherValue(assigned) : null;
+                  const t = teacherId ? teachers.find(t => (t.id || t.user_id || t.user?.id) === teacherId) : null;
+                  const tName = t ? teacherName(t) : "Unassigned";
+
+                  const usedCount = gridData.filter(g => g.subject_id === sub.id).length;
+                  const isDone = usedCount >= sub.periods_per_week;
+
+                  return (
+                    <div
+                      key={sub.id}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, sub.id)}
+                      className={`p-3 rounded-xl border flex flex-col gap-2 cursor-grab active:cursor-grabbing hover:-translate-y-0.5 transition-transform ${
+                        isDone ? "bg-emerald-950/20 border-emerald-900/50" : "bg-slate-800 border-slate-700"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <GripVertical className="w-4 h-4 text-slate-500" />
+                          <div
+                            className="w-3 h-3 rounded-full"
+                            style={{ backgroundColor: sub.color_code || "#3b82f6" }}
+                          />
+                          <span className="text-sm font-bold text-white">{sub.subject_name}</span>
+                        </div>
+                        <span className={`text-xs font-bold ${isDone ? "text-emerald-400" : "text-blue-400"}`}>
+                          {usedCount}/{sub.periods_per_week}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-xs text-slate-400 pl-6">
+                        <UserCheck className="w-3 h-3" /> {tName}
+                      </div>
+                      <div className="h-1 bg-slate-900 rounded-full mt-1 overflow-hidden">
+                         <div 
+                           className={`h-full ${isDone ? "bg-emerald-500" : "bg-blue-500"}`} 
+                           style={{ width: `${Math.min(100, (usedCount / sub.periods_per_week) * 100)}%`}} 
+                         />
+                      </div>
+                    </div>
+                  );
+                })}
+                {classSubjects.length === 0 && (
+                   <p className="text-sm text-slate-500 text-center py-4">No subjects added.</p>
+                )}
+              </div>
+            </div>
+
+            {/* MAIN GRID */}
+            <div className="flex-1 bg-[#111827] border border-slate-800 rounded-2xl p-4 overflow-x-auto">
+               {isLoadingGrid ? (
+                  <div className="flex flex-col items-center justify-center py-20 h-[400px]">
+                     <Loader2 className="w-8 h-8 animate-spin text-blue-500 mb-4" />
+                     <p className="text-slate-400">Loading Grid Configuration...</p>
+                  </div>
+               ) : !timeConfig ? (
+                  <div className="flex flex-col items-center justify-center py-20 h-[400px] border-2 border-dashed border-slate-800 rounded-xl">
+                     <Clock className="w-10 h-10 text-slate-600 mb-3" />
+                     <p className="text-white font-medium">Time Slots Not Configured</p>
+                     <button onClick={openTimeConfigModal} className="mt-3 text-blue-400 text-sm hover:underline">
+                        Setup Time Slots Now
+                     </button>
+                  </div>
+               ) : (
+                  <table className="w-full text-sm text-left border-collapse min-w-[800px]">
+                    <thead>
+                      <tr>
+                        <th className="p-3 border-b border-r border-slate-700 bg-slate-800/50 text-slate-300 font-semibold w-24 text-center">
+                          Day
+                        </th>
+                        {timeConfig.period_slots.map((p: any, idx: number) => (
+                          <th key={idx} className="p-2 border-b border-r border-slate-700 bg-slate-800/30 text-center min-w-[120px]">
+                            <div className="font-bold text-slate-200">{p.name}</div>
+                            <div className="text-[10px] text-slate-500 font-normal">{p.start} - {p.end}</div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(timeConfig.working_days || []).map((day: string) => (
+                        <tr key={day} className="border-b border-slate-800 hover:bg-slate-800/10">
+                          <td className="p-3 border-r border-slate-700 text-slate-300 font-bold text-center bg-slate-800/20 uppercase">
+                            {day.substring(0, 3)}
+                          </td>
+                          {timeConfig.period_slots.map((p: any, idx: number) => {
+                            if (p.type === "BREAK" || p.type === "LUNCH") {
+                               return (
+                                 <td key={idx} className="p-2 border-r border-slate-800 bg-amber-900/10 text-center">
+                                    <div className="text-amber-500/50 text-xs font-bold uppercase tracking-widest rotate-180" style={{ writingMode: 'vertical-rl' }}>
+                                      {p.type}
+                                    </div>
+                                 </td>
+                               )
+                            }
+
+                            const cell = gridData.find(g => g.day_of_week === day && g.period_number === p.period);
+                            const hasClash = clashWarnings[`${day}-${p.period}`];
+
+                            return (
+                              <td
+                                key={idx}
+                                className={`p-2 border-r border-slate-800 transition-all ${
+                                  cell ? (hasClash ? "bg-red-950/20 border-red-900/50" : "bg-blue-950/10 hover:bg-blue-900/20") : "bg-[#0f172a] hover:bg-slate-800/50"
+                                }`}
+                                onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
+                                onDrop={(e) => handleDrop(e, day, p.period)}
+                              >
+                                {cell ? (
+                                   <div className={`relative group flex flex-col items-center justify-center p-2 rounded-lg border ${hasClash ? 'border-red-500/50' : 'border-blue-800/50'}`}>
+                                      <div className="text-xs font-bold text-white text-center mb-1 leading-tight">
+                                        {cell.subject_name}
+                                      </div>
+                                      <div className="text-[10px] text-slate-400 text-center max-w-full truncate px-1">
+                                        {cell.teacher_name || "No Teacher"}
+                                      </div>
+                                      {hasClash && (
+                                         <div className="absolute -top-2 -right-2 bg-red-600 rounded-full p-0.5 shadow-lg group-hover:scale-110 transition-transform" title={hasClash}>
+                                            <AlertTriangle className="w-3 h-3 text-white" />
+                                         </div>
+                                      )}
+                                      <button 
+                                        onClick={() => handleRemoveCell(day, p.period)}
+                                        className="absolute -top-2 -left-2 bg-slate-700 hover:bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-all shadow-lg"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                   </div>
+                                ) : (
+                                   <div className="w-full h-full min-h-[60px] flex items-center justify-center border-2 border-dashed border-slate-700/50 rounded-lg text-slate-600 text-[10px] uppercase font-bold tracking-wider">
+                                     Drop
+                                   </div>
+                                )}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TIME CONFIG MODAL */}
+      {isTimeModalOpen && tempTimeConfig && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-[#111827] border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
+             <div className="flex items-center justify-between p-5 border-b border-slate-800">
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                   <Clock className="w-5 h-5 text-blue-400" />
+                   Configure Time Slots
+                </h2>
+                <button onClick={() => setIsTimeModalOpen(false)} className="text-slate-400 hover:text-white">
+                  <X className="w-5 h-5" />
+                </button>
+             </div>
+             
+             <div className="p-5 overflow-y-auto flex-1 space-y-6">
+                <div>
+                   <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 block">Working Days</label>
+                   <div className="flex flex-wrap gap-2">
+                     {["MON","TUE","WED","THU","FRI","SAT","SUN"].map(d => {
+                        const active = tempTimeConfig.working_days.includes(d);
+                        return (
+                          <button
+                            key={d}
+                            onClick={() => {
+                               setTempTimeConfig((prev: any) => ({
+                                  ...prev,
+                                  working_days: active ? prev.working_days.filter((x: string) => x !== d) : [...prev.working_days, d]
+                               }))
+                            }}
+                            className={`px-4 py-2 rounded-lg text-sm font-bold border transition-all ${
+                              active ? "bg-blue-600 text-white border-blue-500" : "bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700"
+                            }`}
+                          >
+                            {d}
+                          </button>
+                        )
+                     })}
+                   </div>
+                </div>
+
+                <div>
+                   <div className="flex items-center justify-between mb-3">
+                     <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Periods & Breaks</label>
+                     <button 
+                       onClick={() => {
+                          const newP = {
+                             period: tempTimeConfig.period_slots.length + 1,
+                             name: `P${tempTimeConfig.period_slots.length + 1}`,
+                             start: "00:00",
+                             end: "00:00",
+                             type: "CLASS"
+                          };
+                          setTempTimeConfig((p: any) => ({ ...p, period_slots: [...p.period_slots, newP] }));
+                       }}
+                       className="text-xs font-bold text-blue-400 hover:underline flex items-center gap-1"
+                     >
+                       <Plus className="w-3 h-3" /> Add Slot
+                     </button>
+                   </div>
+                   
+                   <div className="space-y-2">
+                     {tempTimeConfig.period_slots.map((slot: any, idx: number) => (
+                        <div key={idx} className="flex flex-wrap sm:flex-nowrap items-center gap-2 bg-[#0f172a] p-2 rounded-lg border border-slate-800">
+                           <input 
+                             type="text" 
+                             value={slot.name}
+                             onChange={(e) => {
+                                const arr = [...tempTimeConfig.period_slots];
+                                arr[idx].name = e.target.value;
+                                setTempTimeConfig({...tempTimeConfig, period_slots: arr});
+                             }}
+                             className="w-20 bg-slate-900 border border-slate-700 text-white text-sm rounded px-2 py-1.5 outline-none"
+                             placeholder="Name (P1)"
+                           />
+                           <input 
+                             type="time" 
+                             value={slot.start}
+                             onChange={(e) => {
+                                const arr = [...tempTimeConfig.period_slots];
+                                arr[idx].start = e.target.value;
+                                setTempTimeConfig({...tempTimeConfig, period_slots: arr});
+                             }}
+                             className="w-28 bg-slate-900 border border-slate-700 text-white text-sm rounded px-2 py-1.5 outline-none"
+                           />
+                           <span className="text-slate-500 text-xs">to</span>
+                           <input 
+                             type="time" 
+                             value={slot.end}
+                             onChange={(e) => {
+                                const arr = [...tempTimeConfig.period_slots];
+                                arr[idx].end = e.target.value;
+                                setTempTimeConfig({...tempTimeConfig, period_slots: arr});
+                             }}
+                             className="w-28 bg-slate-900 border border-slate-700 text-white text-sm rounded px-2 py-1.5 outline-none"
+                           />
+                           <select 
+                             value={slot.type}
+                             onChange={(e) => {
+                                const arr = [...tempTimeConfig.period_slots];
+                                arr[idx].type = e.target.value;
+                                setTempTimeConfig({...tempTimeConfig, period_slots: arr});
+                             }}
+                             className="w-28 bg-slate-900 border border-slate-700 text-white text-sm rounded px-2 py-1.5 outline-none"
+                           >
+                              <option value="CLASS">Class</option>
+                              <option value="BREAK">Break</option>
+                              <option value="LUNCH">Lunch</option>
+                           </select>
+                           
+                           <button 
+                             onClick={() => {
+                               const arr = tempTimeConfig.period_slots.filter((_: any, i: number) => i !== idx);
+                               // Re-index periods
+                               arr.forEach((a: any, i: number) => { a.period = i + 1; });
+                               setTempTimeConfig({...tempTimeConfig, period_slots: arr});
+                             }}
+                             className="p-1.5 text-slate-500 hover:text-red-400 rounded-lg ml-auto"
+                           >
+                             <Trash2 className="w-4 h-4" />
+                           </button>
+                        </div>
+                     ))}
+                   </div>
+                </div>
+             </div>
+
+             <div className="p-4 border-t border-slate-800 bg-slate-900/50 flex justify-end gap-3 rounded-b-2xl">
+                <button 
+                  onClick={() => setIsTimeModalOpen(false)}
+                  className="px-5 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={saveTimeConfig}
+                  className="px-5 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-2 shadow-lg shadow-blue-900/20"
+                >
+                  <Save className="w-4 h-4" /> Save Configuration
+                </button>
+             </div>
+          </div>
         </div>
       )}
     </div>
