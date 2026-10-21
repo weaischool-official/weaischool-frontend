@@ -1,1392 +1,903 @@
-﻿"use client";
+﻿'use client';
 
-import React, { useState, useEffect, useMemo } from "react";
-import { useParams } from "next/navigation";
-import { api } from "@/lib/api";
-import { toast } from "react-hot-toast";
+import React, { useState, useEffect } from 'react';
+import { useParams } from 'next/navigation';
 import {
-  BookOpen,
-  Users,
-  CalendarDays,
+  Sparkles,
+  Calendar,
   Plus,
-  Minus,
-  Trash2,
-  Search,
-  CheckCircle2,
-  AlertCircle,
-  UserCheck,
-  Loader2,
-  AlertTriangle,
-  Settings,
-  Save,
   RefreshCw,
-  X,
+  Trash2,
+  Save,
+  Copy,
+  AlertTriangle,
   Clock,
-  GripVertical
-} from "lucide-react";
+  Settings,
+  X,
+  Check,
+  Loader2,
+  Info
+} from 'lucide-react';
 
-const QUICK_SUBJECTS = [
-  { name: "Mathematics", color: "#3B82F6" },
-  { name: "English", color: "#10B981" },
-  { name: "Science", color: "#8B5CF6" },
-  { name: "Social Science", color: "#F59E0B" },
-  { name: "Hindi", color: "#EF4444" },
-  { name: "Computer", color: "#06B6D4" },
-  { name: "Physical Education", color: "#84CC16" },
-  { name: "General Knowledge", color: "#EC4899" },
-  { name: "Art & Craft", color: "#F97316" },
-  { name: "EVS", color: "#14B8A6" },
+interface ClassItem {
+  id: string;
+  class_name: string;
+}
+
+interface SectionItem {
+  id: string;
+  section_name: string;
+}
+
+interface TeacherItem {
+  id: string;
+  full_name: string;
+  qualification?: string;
+}
+
+interface SubjectItem {
+  id: string;
+  subject_name: string;
+  code?: string;
+}
+
+interface TimeSlot {
+  period_num: number;
+  name: string;
+  start_time: string;
+  end_time: string;
+  slot_type: 'CLASS' | 'BREAK' | 'LUNCH';
+}
+
+interface TimeSlotConfig {
+  working_days: string[];
+  period_slots: TimeSlot[];
+}
+
+interface GridCell {
+  period_num: number;
+  day: string;
+  teacher_id?: string;
+  teacher_name?: string;
+  subject_name?: string;
+  room_no?: string;
+  is_clash?: boolean;
+  clash_reason?: string;
+}
+
+interface TeacherClash {
+  period_num: number;
+  day: string;
+  clashing_class_name: string;
+}
+
+const DEFAULT_SLOTS: TimeSlot[] = [
+  { period_num: 1, name: 'Period 1', start_time: '08:00', end_time: '08:45', slot_type: 'CLASS' },
+  { period_num: 2, name: 'Period 2', start_time: '08:45', end_time: '09:30', slot_type: 'CLASS' },
+  { period_num: 3, name: 'Short Break', start_time: '09:30', end_time: '09:45', slot_type: 'BREAK' },
+  { period_num: 4, name: 'Period 3', start_time: '09:45', end_time: '10:30', slot_type: 'CLASS' },
+  { period_num: 5, name: 'Period 4', start_time: '10:30', end_time: '11:15', slot_type: 'CLASS' },
+  { period_num: 6, name: 'Lunch Break', start_time: '11:15', end_time: '12:00', slot_type: 'LUNCH' },
+  { period_num: 7, name: 'Period 5', start_time: '12:00', end_time: '12:45', slot_type: 'CLASS' },
+  { period_num: 8, name: 'Period 6', start_time: '12:45', end_time: '13:30', slot_type: 'CLASS' },
 ];
 
-const MAX_PERIODS = 30;
+const DEFAULT_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-// Normalize subject names for precise matching
-const normalizeSubject = (str: string): string => {
-  if (!str) return "";
-  return str.toLowerCase().replace(/[^a-z0-9]/g, "");
-};
-
-// Precise subject matching using discrete synonym groups
-const matchSubjects = (classSubjectName: string, teacherSubjectName: string): boolean => {
-  const normClass = normalizeSubject(classSubjectName);
-  const normTeacher = normalizeSubject(teacherSubjectName);
-
-  if (!normClass || !normTeacher) return false;
-
-  if (normClass === normTeacher) return true;
-
-  const synonymGroups: string[][] = [
-    ["mathematics", "maths", "math", "quantitative"],
-    ["informationtechnology", "it", "computer", "computers", "computerscience", "cs", "ip"],
-    ["socialscience", "sst", "socialstudies", "history", "geography", "civics", "politicalscience"],
-    ["science", "physics", "chemistry", "biology"],
-    ["physicaleducation", "pe", "sports", "pt"],
-    ["generalknowledge", "gk"],
-    ["evs", "environmentalstudies", "environmentalscience"],
-    ["art", "drawing", "craft", "arts"],
-    ["english", "eng"],
-    ["hindi"],
-    ["marathi"],
-    ["sanskrit"],
-  ];
-
-  for (const group of synonymGroups) {
-    if (group.includes(normClass) && group.includes(normTeacher)) {
-      return true;
-    }
-  }
-
-  return false;
-};
-
-// Comprehensive Subject Extraction from Staff Profiles
-const getTeacherSubjects = (t: any): string[] => {
-  if (!t) return [];
-  const found: string[] = [];
-
-  const extract = (val: any) => {
-    if (!val) return;
-    if (Array.isArray(val)) {
-      val.forEach((item) => extract(item));
-      return;
-    }
-    if (typeof val === "string") {
-      const trimmed = val.trim();
-      if (!trimmed) return;
-      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-        try {
-          const parsed = JSON.parse(trimmed);
-          if (Array.isArray(parsed)) {
-            parsed.forEach((p) => extract(p));
-            return;
-          }
-        } catch (e) {}
-      }
-      trimmed.split(",").forEach((s) => {
-        const clean = s.trim();
-        if (clean) found.push(clean);
-      });
-      return;
-    }
-    if (typeof val === "object") {
-      const name = val.name || val.subject_name || val.subject || "";
-      if (typeof name === "string" && name.trim()) {
-        found.push(name.trim());
-      }
-    }
-  };
-
-  extract(t.subjects);
-  extract(t.subjects_taught);
-  extract(t.subject);
-
-  let extras = t.extras;
-  if (typeof extras === "string") {
-    try {
-      extras = JSON.parse(extras);
-    } catch (e) {
-      extras = null;
-    }
-  }
-  if (extras && typeof extras === "object") {
-    extract(extras.subjects);
-    extract(extras.subject);
-    extract(extras.subjects_taught);
-  }
-
-  let extrasData = t.extras_data;
-  if (typeof extrasData === "string") {
-    try {
-      extrasData = JSON.parse(extrasData);
-    } catch (e) {
-      extrasData = null;
-    }
-  }
-  if (extrasData && typeof extrasData === "object") {
-    extract(extrasData.subjects);
-    extract(extrasData.subject);
-  }
-
-  if (t.user) {
-    extract(t.user.subjects);
-    let uExtras = t.user.extras;
-    if (typeof uExtras === "string") {
-      try {
-        uExtras = JSON.parse(uExtras);
-      } catch (e) {
-        uExtras = null;
-      }
-    }
-    if (uExtras && typeof uExtras === "object") {
-      extract(uExtras.subjects);
-    }
-  }
-
-  return Array.from(new Set(found));
-};
-
-export default function TimetableBuilderPage() {
+export default function SmartTimetablePage() {
   const params = useParams();
+  const slug = (params?.slug as string) || '';
 
-  const [activeTab, setActiveTab] = useState<"subjects" | "teachers" | "timetable">("subjects");
-  const [isLoading, setIsLoading] = useState(false);
-  const [isAddingId, setIsAddingId] = useState<string | null>(null);
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'automate' | 'manual' | 'grid'>('grid');
 
-  const [classes, setClasses] = useState<any[]>([]);
-  const [selectedClassId, setSelectedClassId] = useState<string>("");
+  // Dropdown data
+  const [classes, setClasses] = useState<ClassItem[]>([]);
+  const [sections, setSections] = useState<SectionItem[]>([]);
+  const [teachers, setTeachers] = useState<TeacherItem[]>([]);
+  const [subjects, setSubjects] = useState<SubjectItem[]>([]);
 
-  const [sections, setSections] = useState<any[]>([]);
-  const [selectedSectionId, setSelectedSectionId] = useState<string>("");
-  const [isLoadingSections, setIsLoadingSections] = useState(false);
+  // Selected filters
+  const [selectedClassId, setSelectedClassId] = useState<string>('');
+  const [selectedSectionId, setSelectedSectionId] = useState<string>('');
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string>('');
 
-  const [classSubjects, setClassSubjects] = useState<any[]>([]);
-  const [subjectQuery, setSubjectQuery] = useState("");
-  const [apiSuggestions, setApiSuggestions] = useState<any[]>([]);
+  // Slot Config & Grid State
+  const [slotConfig, setSlotConfig] = useState<TimeSlotConfig>({
+    working_days: DEFAULT_DAYS,
+    period_slots: DEFAULT_SLOTS,
+  });
+  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
 
-  // Tab 2 states
-  const [teachers, setTeachers] = useState<any[]>([]);
-  const [assignments, setAssignments] = useState<Record<string, any>>({});
-  const [workloads, setWorkloads] = useState<any[]>([]);
-  const [isLoadingTeachers, setIsLoadingTeachers] = useState(false);
-  const [assigningId, setAssigningId] = useState<string | null>(null);
+  const [gridData, setGridData] = useState<GridCell[]>([]);
+  const [loadingGrid, setLoadingGrid] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Tab 3 states
-  const [isLoadingGrid, setIsLoadingGrid] = useState(false);
-  const [timeConfig, setTimeConfig] = useState<any>(null);
-  const [gridData, setGridData] = useState<any[]>([]);
-  const [isTimeModalOpen, setIsTimeModalOpen] = useState(false);
-  const [tempTimeConfig, setTempTimeConfig] = useState<any>(null);
-  const [clashWarnings, setClashWarnings] = useState<Record<string, string>>({});
-  const [isSavingGrid, setIsSavingGrid] = useState(false);
+  const [teacherClashes, setTeacherClashes] = useState<Record<string, TeacherClash[]>>({});
+  const [activeCell, setActiveCell] = useState<{ period_num: number; day: string } | null>(null);
 
-  const getSelectedContextName = () => {
-    const clsName = classes.find((c) => c.id === selectedClassId)?.name || "";
-    const secName = sections.find((s) => s.id === selectedSectionId)?.name || "";
-    if (clsName && secName) return `Class ${clsName} (Section ${secName})`;
-    if (clsName) return `Class ${clsName}`;
-    return "...";
+  // Clone Modal
+  const [isCloneModalOpen, setIsCloneModalOpen] = useState(false);
+  const [targetClassId, setTargetClassId] = useState('');
+  const [targetSectionId, setTargetSectionId] = useState('');
+
+  const getHeaders = () => {
+    const authStr = localStorage.getItem('school_auth');
+    if (!authStr) return { 'Content-Type': 'application/json' };
+    const auth = JSON.parse(authStr);
+    return {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${auth.access_token}`,
+    };
   };
 
-  const teacherName = (t: any) => {
-    if (!t) return "Unknown";
-    if (t.full_name) return t.full_name;
-    if (t.name) return t.name;
-    const first = t.first_name || t.firstName || "";
-    const last = t.last_name || t.lastName || "";
-    const n = `${first} ${last}`.trim();
-    return n || t.email || "Teacher";
-  };
-
-  // 1. Fetch Classes on mount
+  // 1. Initial Load: Classes, Teachers, Subjects
   useEffect(() => {
-    const fetchClasses = async () => {
+    if (!slug) return;
+    const fetchInitialData = async () => {
       try {
-        const res = await api.get("/classes");
-        const data = res.data || [];
-        setClasses(data);
-        if (data.length > 0) setSelectedClassId(data[0].id);
-      } catch (error) {
-        toast.error("Failed to load classes");
+        const headers = getHeaders();
+        const [resClasses, resTeachers, resSubjects] = await Promise.all([
+          fetch(`https://weaischool-backend.onrender.com/api/v1/classes?slug=${slug}`, { headers }),
+          fetch(`https://weaischool-backend.onrender.com/api/v1/staff?slug=${slug}&role=TEACHER`, { headers }),
+          fetch(`https://weaischool-backend.onrender.com/api/v1/subjects?slug=${slug}`, { headers }),
+        ]);
+
+        if (resClasses.ok) {
+          const data = await resClasses.json();
+          setClasses(data);
+          if (data.length > 0) setSelectedClassId(data[0].id);
+        }
+        if (resTeachers.ok) setTeachers(await resTeachers.json());
+        if (resSubjects.ok) setSubjects(await resSubjects.json());
+      } catch (err) {
+        console.error('Error loading initial timetable data:', err);
       }
     };
-    fetchClasses();
-  }, []);
+    fetchInitialData();
+  }, [slug]);
 
-  // 2. Fetch SECTIONS when Class changes
+  // 2. Load Sections when Class changes
   useEffect(() => {
-    if (!selectedClassId) {
-      setSections([]);
-      setSelectedSectionId("");
-      return;
-    }
-
-    const currentClass = classes.find((c) => c.id === selectedClassId);
-    if (
-      currentClass?.sections &&
-      Array.isArray(currentClass.sections) &&
-      currentClass.sections.length > 0
-    ) {
-      setSections(currentClass.sections);
-      setSelectedSectionId(currentClass.sections[0].id);
-      return;
-    }
-
+    if (!selectedClassId || !slug) return;
     const fetchSections = async () => {
-      setIsLoadingSections(true);
       try {
-        const res = await api.get(`/classes/${selectedClassId}/sections`);
-        const secData = res.data || [];
-        setSections(secData);
-        if (secData.length > 0) {
-          setSelectedSectionId(secData[0].id);
-        } else {
-          setSelectedSectionId("");
+        const res = await fetch(`https://weaischool-backend.onrender.com/api/v1/classes/${selectedClassId}/sections`, {
+          headers: getHeaders(),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSections(data);
+          if (data.length > 0) setSelectedSectionId(data[0].id);
+          else setSelectedSectionId('');
         }
-      } catch (error) {
-        setSections([]);
-        setSelectedSectionId("");
-      } finally {
-        setIsLoadingSections(false);
+      } catch (err) {
+        console.error('Error loading sections:', err);
       }
     };
     fetchSections();
-  }, [selectedClassId, classes]);
+  }, [selectedClassId, slug]);
 
-  // 3. Fetch SUBJECTS per Class + Section
-  useEffect(() => {
-    if (!selectedClassId) return;
+  // 3. Load Slot Config and Grid Entries when Class/Section changes
+  const fetchGridAndConfig = async () => {
+    if (!selectedClassId || !selectedSectionId) return;
+    setLoadingGrid(true);
+    try {
+      const headers = getHeaders();
 
-    const fetchSubjects = async () => {
-      setIsLoading(true);
-      try {
-        let url = `/class-subjects?class_id=${selectedClassId}`;
-        if (selectedSectionId) {
-          url += `&section_id=${selectedSectionId}`;
+      // Fetch Time Config
+      const resConfig = await fetch(
+        `https://weaischool-backend.onrender.com/api/v1/timetable-grid/config?class_id=${selectedClassId}&section_id=${selectedSectionId}`,
+        { headers }
+      );
+      if (resConfig.ok) {
+        const cfgData = await resConfig.json();
+        if (cfgData && cfgData.period_slots && cfgData.period_slots.length > 0) {
+          setSlotConfig({
+            working_days: cfgData.working_days || DEFAULT_DAYS,
+            period_slots: cfgData.period_slots,
+          });
         }
-        const res = await api.get(url);
-        setClassSubjects(res.data || []);
-      } catch (error) {
-        console.error("Failed to fetch subjects:", error);
-      } finally {
-        setIsLoading(false);
       }
-    };
-    fetchSubjects();
+
+      // Fetch Grid Entries
+      const resEntries = await fetch(
+        `https://weaischool-backend.onrender.com/api/v1/timetable-grid/entries?class_id=${selectedClassId}&section_id=${selectedSectionId}`,
+        { headers }
+      );
+      if (resEntries.ok) {
+        const entriesData = await resEntries.json();
+        setGridData(entriesData);
+      }
+
+      // Check teacher clashes across school
+      fetchTeacherClashes();
+    } catch (err) {
+      console.error('Error loading timetable grid:', err);
+    } finally {
+      setLoadingGrid(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedClassId && selectedSectionId) {
+      fetchGridAndConfig();
+    }
   }, [selectedClassId, selectedSectionId]);
 
-  // 4. Fetch API Suggestions as user types
-  useEffect(() => {
-    if (subjectQuery.trim() === "") {
-      setApiSuggestions([]);
-      return;
-    }
-    const fetchSuggestions = async () => {
-      try {
-        const res = await api.get(`/class-subjects/suggestions?query=${subjectQuery}`);
-        setApiSuggestions(res.data.suggestions || []);
-      } catch (error) {
-        setApiSuggestions([]);
-      }
-    };
-    const debounce = setTimeout(fetchSuggestions, 300);
-    return () => clearTimeout(debounce);
-  }, [subjectQuery]);
-
-  // 5. Load Teachers + Assignments + Workloads when Tab 2 or 3 opens
-  useEffect(() => {
-    if ((activeTab !== "teachers" && activeTab !== "timetable") || !selectedClassId) return;
-
-    const loadData = async () => {
-      setIsLoadingTeachers(true);
-      try {
-        let teacherList: any[] = [];
-        try {
-          const r = await api.get("/staff?role=teacher");
-          teacherList = Array.isArray(r.data) ? r.data : r.data?.items || r.data?.data || [];
-        } catch {
-          try {
-            const r2 = await api.get("/staff");
-            const all = Array.isArray(r2.data) ? r2.data : r2.data?.items || [];
-            teacherList = all;
-          } catch {
-            teacherList = [];
-          }
-        }
-
-        const enrichedTeachers = await Promise.all(
-          teacherList.map(async (t) => {
-            const staffId = t.id || t.user_id || t.user?.id;
-            if (!staffId) return t;
-            try {
-              const detailRes = await api.get(`/staff/${staffId}`);
-              return { ...t, ...detailRes.data, extras: detailRes.data?.extras || t.extras };
-            } catch {
-              return t;
-            }
-          })
-        );
-        setTeachers(enrichedTeachers);
-
-        try {
-          let aUrl = `/teacher-assignments?class_id=${selectedClassId}`;
-          if (selectedSectionId) aUrl += `&section_id=${selectedSectionId}`;
-          const aRes = await api.get(aUrl);
-          const list = aRes.data || [];
-          const map: Record<string, any> = {};
-          list.forEach((a: any) => {
-            map[a.class_subject_id] = a;
-          });
-          setAssignments(map);
-        } catch {
-          setAssignments({});
-        }
-
-        try {
-          const wRes = await api.get("/teacher-assignments/workload/all");
-          setWorkloads(wRes.data || []);
-        } catch {
-          setWorkloads([]);
-        }
-      } finally {
-        setIsLoadingTeachers(false);
-      }
-    };
-
-    loadData();
-  }, [activeTab, selectedClassId, selectedSectionId]);
-
-  // 6. Load Tab 3 Grid Data
-  useEffect(() => {
-    if (activeTab !== "timetable" || !selectedClassId) return;
-    const loadGrid = async () => {
-      setIsLoadingGrid(true);
-      try {
-        const tcRes = await api.get(
-          `/timetable-grid/time-config?class_id=${selectedClassId}&section=${selectedSectionId}`
-        );
-        setTimeConfig(tcRes.data);
-
-        const gridRes = await api.get(
-          `/timetable-grid/grid?class_id=${selectedClassId}&section=${selectedSectionId}`
-        );
-        setGridData(gridRes.data || []);
-      } catch (error) {
-        toast.error("Failed to load timetable grid");
-      } finally {
-        setIsLoadingGrid(false);
-      }
-    };
-    loadGrid();
-  }, [activeTab, selectedClassId, selectedSectionId]);
-
-  const getDisplayedChips = () => {
-    let chips: any[] = [];
-    if (subjectQuery.trim().length > 0) {
-      if (apiSuggestions.length > 0) {
-        chips = apiSuggestions.map((s) => ({
-          name: s.name,
-          color: s.suggested_color || "#3B82F6",
-        }));
-      } else {
-        chips = QUICK_SUBJECTS.filter((s) =>
-          s.name.toLowerCase().includes(subjectQuery.toLowerCase())
-        );
-      }
-    } else {
-      chips = QUICK_SUBJECTS;
-    }
-    const addedNames = classSubjects.map((cs) => cs.subject_name.toLowerCase());
-    return chips.filter((chip) => !addedNames.includes(chip.name.toLowerCase())).slice(0, 12);
-  };
-
-  const displayedChips = getDisplayedChips();
-  const exactMatchExists =
-    displayedChips.some((c) => c.name.toLowerCase() === subjectQuery.toLowerCase().trim()) ||
-    classSubjects.some((cs) => cs.subject_name.toLowerCase() === subjectQuery.toLowerCase().trim());
-
-  const handleAddSubject = async (name: string, color: string = "#3B82F6", isCustom: boolean = false) => {
-    if (!selectedClassId) {
-      toast.error("Please select a class first");
-      return;
-    }
-
-    setIsAddingId(name);
+  const fetchTeacherClashes = async () => {
     try {
-      const res = await api.post("/class-subjects", {
-        class_id: selectedClassId,
-        section_id: selectedSectionId || null,
-        subject_name: name,
-        periods_per_week: 5,
-        color_code: color,
-        is_custom: isCustom,
+      const res = await fetch(`https://weaischool-backend.onrender.com/api/v1/timetable-grid/check-clash`, {
+        headers: getHeaders(),
       });
-
-      setClassSubjects((prev) => [...prev, res.data]);
-      setSubjectQuery("");
-      toast.success(`${name} added!`);
-    } catch (error: any) {
-      const msg = error.response?.data?.detail || error.message || "Failed to add subject";
-      toast.error(msg);
-    } finally {
-      setIsAddingId(null);
-    }
-  };
-
-  const handleUpdatePeriods = async (subjectId: string, currentPeriods: number, delta: number) => {
-    const newPeriods = currentPeriods + delta;
-    if (newPeriods < 1 || newPeriods > 20) return;
-
-    setUpdatingId(subjectId);
-    try {
-      await api.patch(`/class-subjects/${subjectId}`, {
-        periods_per_week: newPeriods,
-      });
-
-      setClassSubjects((prev) =>
-        prev.map((s) => (s.id === subjectId ? { ...s, periods_per_week: newPeriods } : s))
-      );
-      toast.success(`Updated to ${newPeriods} periods/week`);
-    } catch (error: any) {
-      toast.error("Failed to update periods");
-    } finally {
-      setUpdatingId(null);
-    }
-  };
-
-  const handleDeleteSubject = async (subjectId: string, name: string) => {
-    if (!confirm(`Remove ${name}?`)) return;
-    try {
-      await api.delete(`/class-subjects/${subjectId}`);
-      setClassSubjects((prev) => prev.filter((s) => s.id !== subjectId));
-      toast.success("Subject removed");
-    } catch (error: any) {
-      const detail = error.response?.data?.detail;
-      toast.error(typeof detail === "string" ? detail : "Failed to remove");
-    }
-  };
-
-  const handleAssignTeacher = async (classSubjectId: string, teacherId: string) => {
-    if (!teacherId) return;
-    setAssigningId(classSubjectId);
-    try {
-      const res = await api.post("/teacher-assignments", {
-        class_subject_id: classSubjectId,
-        section_id: selectedSectionId || null,
-        teacher_id: teacherId,
-      });
-
-      setAssignments((prev) => ({
-        ...prev,
-        [classSubjectId]: res.data,
-      }));
-
-      try {
-        const wRes = await api.get("/teacher-assignments/workload/all");
-        setWorkloads(wRes.data || []);
-      } catch {}
-
-      if (res.data?.is_overloaded) {
-        toast.warning(
-          `${res.data.teacher_name} is now at ${res.data.current_workload}/30 periods - overloaded, but saved.`
-        );
-      } else {
-        toast.success(`Assigned to ${res.data.teacher_name}`);
+      if (res.ok) {
+        const clashesData = await res.json();
+        setTeacherClashes(clashesData);
       }
-    } catch (e: any) {
-      const detail = e.response?.data?.detail || e.response?.data?.message || e.message;
-      toast.error(typeof detail === "string" ? detail : "Failed to assign teacher");
-    } finally {
-      setAssigningId(null);
+    } catch (err) {
+      console.error('Error checking clashes:', err);
     }
   };
 
-  const getAssignedTeacherValue = (assignedObj: any) => {
-    if (!assignedObj) return "";
-    const aTeacherId = assignedObj.teacher_id;
-    const aStaffId = assignedObj.staff_id;
-
-    const match = teachers.find(
-      (t) =>
-        t.id === aTeacherId ||
-        t.user_id === aTeacherId ||
-        t.user?.id === aTeacherId ||
-        t.id === aStaffId ||
-        t.user_id === aStaffId
-    );
-
-    if (match) {
-      return match.id || match.user_id || match.user?.id;
-    }
-    return aTeacherId || aStaffId || "";
-  };
-
-  const assignedCount = useMemo(() => {
-    return classSubjects.filter((s) => assignments[s.id]?.teacher_id).length;
-  }, [classSubjects, assignments]);
-
-  // ================= TAB 3 DRAG & DROP & GRID LOGIC =================
-
-  const handleDragStart = (e: React.DragEvent, subjectId: string) => {
-    e.dataTransfer.setData("subject_id", subjectId);
-    e.dataTransfer.effectAllowed = "move";
-  };
-
-  const handleDrop = async (e: React.DragEvent, day: string, periodNumber: number) => {
-    e.preventDefault();
-    const subjectId = e.dataTransfer.getData("subject_id");
-    if (!subjectId) return;
-
-    const sub = classSubjects.find((s) => s.id === subjectId);
-    if (!sub) return;
-
-    const assigned = assignments[subjectId];
-    const teacherId = assigned ? getAssignedTeacherValue(assigned) : null;
-    let teacherNameStr = null;
-    
-    if (teacherId) {
-      const t = teachers.find((t) => (t.id || t.user_id || t.user?.id) === teacherId);
-      teacherNameStr = t ? teacherName(t) : null;
-    }
-
-    const newEntry = {
-      day_of_week: day,
-      period_number: periodNumber,
-      subject_id: sub.id,
-      subject_name: sub.subject_name,
-      teacher_id: teacherId || null,
-      teacher_name: teacherNameStr,
-      slot_type: "CLASS",
-      color_code: sub.color_code
-    };
-
+  // Cell Update Helper
+  const handleCellUpdate = (periodNum: number, day: string, field: keyof GridCell, value: string) => {
     setGridData((prev) => {
-      const filtered = prev.filter((g) => !(g.day_of_week === day && g.period_number === periodNumber));
-      return [...filtered, newEntry];
-    });
+      const existingIdx = prev.findIndex((c) => c.period_num === periodNum && c.day === day);
+      if (existingIdx >= 0) {
+        const updated = [...prev];
+        const updatedCell = { ...updated[existingIdx], [field]: value };
 
-    if (teacherId) {
-      try {
-        const res = await api.post("/timetable-grid/check-clash", {
-          teacher_id: teacherId,
-          day_of_week: day,
-          period_number: periodNumber,
+        if (field === 'teacher_id') {
+          const t = teachers.find((tch) => tch.id === value);
+          updatedCell.teacher_name = t ? t.full_name : '';
+        }
+        updated[existingIdx] = updatedCell;
+        return updated;
+      } else {
+        const newCell: GridCell = {
+          period_num: periodNum,
+          day,
+          [field]: value,
+        };
+        if (field === 'teacher_id') {
+          const t = teachers.find((tch) => tch.id === value);
+          newCell.teacher_name = t ? t.full_name : '';
+        }
+        return [...prev, newCell];
+      }
+    });
+  };
+
+  // Drag and Drop Grid Handlers
+  const handleDragStart = (e: React.DragEvent, periodNum: number, day: string) => {
+    const cell = gridData.find((c) => c.period_num === periodNum && c.day === day);
+    if (!cell || (!cell.subject_name && !cell.teacher_id)) return;
+    e.dataTransfer.setData(
+      'text/plain',
+      JSON.stringify({
+        sourcePeriod: periodNum,
+        sourceDay: day,
+        cell,
+      })
+    );
+  };
+
+  const handleDrop = (e: React.DragEvent, targetPeriod: number, targetDay: string) => {
+    e.preventDefault();
+    try {
+      const raw = e.dataTransfer.getData('text/plain');
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      const { sourcePeriod, sourceDay, cell } = data;
+
+      if (sourcePeriod === targetPeriod && sourceDay === targetDay) return;
+
+      setGridData((prev) => {
+        const targetCell = prev.find((c) => c.period_num === targetPeriod && c.day === targetDay);
+        const nextGrid = prev.filter(
+          (c) => !(c.period_num === sourcePeriod && c.day === sourceDay) && !(c.period_num === targetPeriod && c.day === targetDay)
+        );
+
+        // Move source to target
+        nextGrid.push({
+          period_num: targetPeriod,
+          day: targetDay,
+          teacher_id: cell.teacher_id,
+          teacher_name: cell.teacher_name,
+          subject_name: cell.subject_name,
+          room_no: cell.room_no,
         });
-        if (res.data.has_clash) {
-          toast.error(res.data.message);
-          setClashWarnings((prev) => ({ ...prev, [`${day}-${periodNumber}`]: res.data.message }));
-        } else {
-          setClashWarnings((prev) => {
-            const clone = { ...prev };
-            delete clone[`${day}-${periodNumber}`];
-            return clone;
+
+        // Swap target to source if exists
+        if (targetCell) {
+          nextGrid.push({
+            period_num: sourcePeriod,
+            day: sourceDay,
+            teacher_id: targetCell.teacher_id,
+            teacher_name: targetCell.teacher_name,
+            subject_name: targetCell.subject_name,
+            room_no: targetCell.room_no,
           });
         }
-      } catch (err) {
-        console.error("Clash check failed", err);
-      }
+
+        return nextGrid;
+      });
+    } catch (err) {
+      console.error('Invalid drag payload:', err);
     }
   };
 
-  const handleRemoveCell = (day: string, periodNumber: number) => {
-    setGridData((prev) => prev.filter((g) => !(g.day_of_week === day && g.period_number === periodNumber)));
-    setClashWarnings((prev) => {
-      const clone = { ...prev };
-      delete clone[`${day}-${periodNumber}`];
-      return clone;
-    });
-  };
-
-  const handleBulkSave = async () => {
-    setIsSavingGrid(true);
+  // Save Grid to Backend
+  const handleSaveGrid = async () => {
+    if (!selectedClassId || !selectedSectionId) return;
+    setSaving(true);
+    setSaveMsg(null);
     try {
       const payload = {
         class_id: selectedClassId,
-        section: selectedSectionId,
+        section_id: selectedSectionId,
         entries: gridData,
-        replace_all: true,
       };
-      const res = await api.post("/timetable-grid/grid/bulk-save", payload);
-      toast.success(res.data.message || "Timetable saved successfully");
-    } catch (e: any) {
-      const msg = e.response?.data?.detail || "Failed to save timetable";
-      toast.error(typeof msg === "string" ? msg : "Error saving");
-    } finally {
-      setIsSavingGrid(false);
-    }
-  };
+      const res = await fetch(`https://weaischool-backend.onrender.com/api/v1/timetable-grid/entries/bulk`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify(payload),
+      });
 
-  const handleClearGrid = async () => {
-    if (!confirm("Are you sure you want to clear the entire grid?")) return;
-    try {
-      await api.delete(`/timetable-grid/grid?class_id=${selectedClassId}&section=${selectedSectionId}`);
-      setGridData([]);
-      setClashWarnings({});
-      toast.success("Grid cleared");
-    } catch (e) {
-      toast.error("Failed to clear grid");
-    }
-  };
-
-  const openTimeConfigModal = () => {
-    setTempTimeConfig(
-      timeConfig || {
-        working_days: ["MON", "TUE", "WED", "THU", "FRI", "SAT"],
-        period_slots: [],
+      if (res.ok) {
+        setSaveMsg({ type: 'success', text: 'Timetable grid saved successfully!' });
+        fetchTeacherClashes();
+      } else {
+        const errData = await res.json();
+        setSaveMsg({ type: 'error', text: errData.detail || 'Failed to save timetable grid' });
       }
-    );
-    setIsTimeModalOpen(true);
+    } catch (err) {
+      setSaveMsg({ type: 'error', text: 'Network error saving timetable' });
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const saveTimeConfig = async () => {
+  // Save Slot Config
+  const handleSaveConfig = async () => {
+    if (!selectedClassId || !selectedSectionId) return;
+    setIsSavingConfig(true);
     try {
       const payload = {
-        working_days: tempTimeConfig.working_days,
-        period_slots: tempTimeConfig.period_slots,
         class_id: selectedClassId,
-        section: selectedSectionId,
-        apply_to_all: false,
+        section_id: selectedSectionId,
+        working_days: slotConfig.working_days,
+        period_slots: slotConfig.period_slots,
       };
-      const res = await api.post("/timetable-grid/time-config", payload);
-      setTimeConfig(res.data);
-      setIsTimeModalOpen(false);
-      toast.success("Time configuration saved");
-    } catch (e) {
-      toast.error("Failed to save time config");
+      const res = await fetch(`https://weaischool-backend.onrender.com/api/v1/timetable-grid/config`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify(payload),
+      });
+
+      if (res.ok) {
+        setIsConfigModalOpen(false);
+        fetchGridAndConfig();
+      }
+    } catch (err) {
+      console.error('Error saving slot config:', err);
+    } finally {
+      setIsSavingConfig(false);
+    }
+  };
+
+  // Clone Grid
+  const handleCloneGrid = async () => {
+    if (!selectedClassId || !selectedSectionId || !targetClassId || !targetSectionId) return;
+    try {
+      const res = await fetch(
+        `https://weaischool-backend.onrender.com/api/v1/timetable-grid/clone?source_class_id=${selectedClassId}&source_section_id=${selectedSectionId}&target_class_id=${targetClassId}&target_section_id=${targetSectionId}`,
+        {
+          method: 'POST',
+          headers: getHeaders(),
+        }
+      );
+      if (res.ok) {
+        setIsCloneModalOpen(false);
+        alert('Grid cloned successfully!');
+      }
+    } catch (err) {
+      console.error('Clone grid failed:', err);
     }
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6 text-slate-200">
-      {/* HEADER */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div className="p-6 space-y-6 bg-slate-50 min-h-screen text-slate-800">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
         <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Smart Timetable Builder</h1>
-          <p className="text-slate-400 text-sm mt-1">
-            Setup section-wise subjects, assign teachers, and build schedules.
+          <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
+            <Calendar className="w-7 h-7 text-indigo-600" />
+            Smart Timetable Hub
+          </h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Build, automate, and resolve clashes in real-time across your school schedules.
           </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setIsConfigModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
+          >
+            <Clock className="w-4 h-4 text-slate-600" />
+            Configure Time Slots
+          </button>
+
+          <button
+            onClick={handleSaveGrid}
+            disabled={saving}
+            className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md transition disabled:opacity-50"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save Grid
+          </button>
         </div>
       </div>
 
-      {/* 3-TAB NAVIGATION */}
-      <div className="flex bg-[#111827] border border-slate-800 p-1.5 rounded-xl w-fit shadow-sm overflow-x-auto">
+      {/* Tabs */}
+      <div className="flex border-b border-slate-200 bg-white px-6 pt-3 rounded-xl shadow-sm">
         <button
-          onClick={() => setActiveTab("subjects")}
-          className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all whitespace-nowrap ${
-            activeTab === "subjects"
-              ? "bg-blue-600 text-white shadow-md shadow-blue-900/30"
-              : "text-slate-400 hover:text-white"
+          onClick={() => setActiveTab('grid')}
+          className={`pb-3 px-4 font-semibold text-sm border-b-2 transition flex items-center gap-2 ${
+            activeTab === 'grid'
+              ? 'border-indigo-600 text-indigo-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
           }`}
         >
-          <BookOpen className="w-4 h-4" /> 1. Subjects Setup
+          <Calendar className="w-4 h-4" />
+          Interactive Grid Builder (Tab 3)
         </button>
         <button
-          onClick={() => setActiveTab("teachers")}
-          className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all whitespace-nowrap ${
-            activeTab === "teachers"
-              ? "bg-blue-600 text-white shadow-md shadow-blue-900/30"
-              : "text-slate-400 hover:text-white"
+          onClick={() => setActiveTab('manual')}
+          className={`pb-3 px-4 font-semibold text-sm border-b-2 transition flex items-center gap-2 ${
+            activeTab === 'manual'
+              ? 'border-indigo-600 text-indigo-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
           }`}
         >
-          <Users className="w-4 h-4" /> 2. Assign Teachers
+          <Settings className="w-4 h-4" />
+          Teacher Workload Allocator
         </button>
         <button
-          onClick={() => setActiveTab("timetable")}
-          className={`flex items-center gap-2 px-6 py-2.5 rounded-lg font-medium text-sm transition-all whitespace-nowrap ${
-            activeTab === "timetable"
-              ? "bg-blue-600 text-white shadow-md shadow-blue-900/30"
-              : "text-slate-400 hover:text-white"
+          onClick={() => setActiveTab('automate')}
+          className={`pb-3 px-4 font-semibold text-sm border-b-2 transition flex items-center gap-2 ${
+            activeTab === 'automate'
+              ? 'border-indigo-600 text-indigo-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
           }`}
         >
-          <CalendarDays className="w-4 h-4" /> 3. Build Grid
+          <Sparkles className="w-4 h-4 text-amber-500" />
+          AI Auto-Generator
         </button>
       </div>
 
-      {/* GLOBAL SELECTORS */}
-      <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 flex flex-wrap items-center gap-6 shadow-sm">
-        <div className="flex-1 min-w-[200px] max-w-xs">
-          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
-            Select Class
-          </label>
+      {/* Class & Section Selectors */}
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-wrap items-center gap-4">
+        <div>
+          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Select Class</label>
           <select
             value={selectedClassId}
             onChange={(e) => setSelectedClassId(e.target.value)}
-            className="w-full bg-[#0f172a] border border-slate-700 text-white rounded-lg px-3 py-2.5 outline-none focus:border-blue-500"
+            className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500"
           >
-            <option value="" disabled className="text-slate-500">
-              -- Choose Class --
-            </option>
-            {classes.map((cls) => (
-              <option key={cls.id} value={cls.id}>
-                {cls.name}
+            {classes.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.class_name}
               </option>
             ))}
           </select>
         </div>
 
-        <div className="flex-1 min-w-[200px] max-w-xs relative">
-          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
-            Select Section
-            {isLoadingSections && <Loader2 className="w-3 h-3 animate-spin text-blue-400" />}
-          </label>
+        <div>
+          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Select Section</label>
           <select
             value={selectedSectionId}
             onChange={(e) => setSelectedSectionId(e.target.value)}
-            disabled={sections.length === 0}
-            className="w-full bg-[#0f172a] border border-slate-700 text-white rounded-lg px-3 py-2.5 outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500"
           >
-            {sections.length === 0 ? (
-              <option value="">No sections found</option>
-            ) : (
-              sections.map((sec) => (
-                <option key={sec.id} value={sec.id}>
-                  {sec.name}
-                </option>
-              ))
-            )}
+            {sections.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.section_name}
+              </option>
+            ))}
           </select>
         </div>
 
-        {selectedClassId && (
-          <div className="flex items-center gap-2 text-sm text-slate-300 mt-6 bg-[#0f172a] px-4 py-2 rounded-lg border border-slate-800">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            <span>
-              Working on: <strong className="text-white">{getSelectedContextName()}</strong>
-            </span>
-          </div>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => setIsCloneModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            Clone to another Section
+          </button>
+          <button
+            onClick={() => setGridData([])}
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg transition"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Clear Grid
+          </button>
+        </div>
       </div>
 
-      {/* TAB 1: SUBJECTS SETUP */}
-      {activeTab === "subjects" && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-1 space-y-4">
-            <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 shadow-sm">
-              <h3 className="font-bold text-white mb-4">Quick Add Subjects</h3>
-              <div className="relative mb-4">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Type to search or add custom..."
-                  value={subjectQuery}
-                  onChange={(e) => setSubjectQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-[#0f172a] border border-slate-700 text-white placeholder:text-slate-500 rounded-xl outline-none focus:border-blue-500"
-                />
-              </div>
+      {/* Save Notification Toast */}
+      {saveMsg && (
+        <div
+          className={`p-4 rounded-xl flex items-center gap-3 text-sm font-medium ${
+            saveMsg.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
+          }`}
+        >
+          {saveMsg.type === 'success' ? <Check className="w-5 h-5 text-emerald-600" /> : <AlertTriangle className="w-5 h-5 text-rose-600" />}
+          {saveMsg.text}
+        </div>
+      )}
 
-              <div className="flex flex-wrap gap-2">
-                {displayedChips.map((chip, idx) => (
-                  <button
-                    key={idx}
-                    disabled={isAddingId === chip.name}
-                    onClick={() => handleAddSubject(chip.name, chip.color)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-sm text-slate-300 transition-colors disabled:opacity-50"
-                  >
-                    {isAddingId === chip.name ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
-                    ) : (
-                      <Plus className="w-3.5 h-3.5 text-slate-400" style={{ color: chip.color }} />
-                    )}
-                    {chip.name}
-                  </button>
-                ))}
-
-                {subjectQuery.trim() !== "" && !exactMatchExists && (
-                  <button
-                    disabled={isAddingId === subjectQuery.trim()}
-                    onClick={() => handleAddSubject(subjectQuery.trim(), "#6B7280", true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-900/30 hover:bg-blue-900/50 border border-blue-800 rounded-lg text-sm text-blue-300 transition-colors"
-                  >
-                    {isAddingId === subjectQuery.trim() ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Plus className="w-3.5 h-3.5" />
-                    )}
-                    Add "{subjectQuery.trim()}"
-                  </button>
-                )}
-              </div>
+      {/* TAB 3 CONTENT: Smart Drag & Drop Timetable Grid Builder */}
+      {activeTab === 'grid' && (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          {loadingGrid ? (
+            <div className="p-16 text-center text-slate-500 flex flex-col items-center justify-center gap-3">
+              <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+              <p className="font-medium text-sm">Loading timetable grid...</p>
             </div>
-          </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse min-w-[900px]">
+                <thead>
+                  <tr className="bg-slate-100 text-slate-700 text-xs font-bold uppercase tracking-wider border-b border-slate-200">
+                    <th className="p-4 text-left border-r border-slate-200 w-44">Time / Period</th>
+                    {slotConfig.working_days.map((day) => (
+                      <th key={day} className="p-4 text-center border-r border-slate-200 min-w-[160px]">
+                        {day}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {slotConfig.period_slots.map((slot) => {
+                    const isBreakOrLunch = slot.slot_type !== 'CLASS';
 
-          <div className="lg:col-span-2">
-            <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 shadow-sm min-h-[400px]">
-              <h3 className="font-bold text-white flex items-center justify-between mb-5">
-                <span className="flex items-center gap-2">
-                  <BookOpen className="w-4 h-4 text-blue-400" />
-                  Configured Subjects
-                </span>
-                <span className="text-xs font-semibold bg-slate-800 text-slate-300 px-3 py-1 rounded-full border border-slate-700">
-                  Total: {classSubjects.length}
-                </span>
-              </h3>
-
-              {isLoading ? (
-                <div className="flex justify-center py-20 text-slate-400">
-                  <Loader2 className="w-6 h-6 animate-spin" />
-                </div>
-              ) : classSubjects.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-20 text-slate-500 border-2 border-dashed border-slate-800 rounded-xl">
-                  <p className="text-sm font-medium text-slate-300">No subjects configured</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {classSubjects.map((sub) => (
-                    <div
-                      key={sub.id}
-                      className="group flex items-center justify-between p-3.5 rounded-xl border border-slate-700/50 bg-slate-800/40 hover:bg-slate-800 transition-all"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div
-                          className="w-9 h-9 rounded-lg flex items-center justify-center shadow-inner"
-                          style={{
-                            backgroundColor: `${sub.color_code}20`,
-                            border: `1px solid ${sub.color_code}40`,
-                          }}
-                        >
-                          <BookOpen className="w-4 h-4" style={{ color: sub.color_code }} />
-                        </div>
-                        <div>
-                          <p className="text-sm font-bold text-slate-200">{sub.subject_name}</p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <div className="flex items-center gap-1.5 bg-[#0f172a] border border-slate-700 rounded-lg px-2 py-0.5">
-                              <button
-                                onClick={() => handleUpdatePeriods(sub.id, sub.periods_per_week, -1)}
-                                disabled={updatingId === sub.id || sub.periods_per_week <= 1}
-                                className="text-slate-400 hover:text-white disabled:opacity-30 p-0.5"
-                              >
-                                <Minus className="w-3 h-3" />
-                              </button>
-                              <span className="text-xs font-bold text-blue-400 min-w-[50px] text-center">
-                                {updatingId === sub.id ? "..." : `${sub.periods_per_week} / wk`}
-                              </span>
-                              <button
-                                onClick={() => handleUpdatePeriods(sub.id, sub.periods_per_week, 1)}
-                                disabled={updatingId === sub.id || sub.periods_per_week >= 20}
-                                className="text-slate-400 hover:text-white disabled:opacity-30 p-0.5"
-                              >
-                                <Plus className="w-3 h-3" />
-                              </button>
-                            </div>
+                    return (
+                      <tr key={slot.period_num} className={isBreakOrLunch ? 'bg-amber-50/50' : 'hover:bg-slate-50/50 transition'}>
+                        {/* Time Column */}
+                        <td className="p-4 border-r border-slate-200 bg-slate-50/80">
+                          <div className="font-bold text-sm text-slate-900">{slot.name}</div>
+                          <div className="text-xs text-slate-500 font-medium flex items-center gap-1 mt-0.5">
+                            <Clock className="w-3 h-3 text-slate-400" />
+                            {slot.start_time} - {slot.end_time}
                           </div>
-                        </div>
-                      </div>
+                          {isBreakOrLunch && (
+                            <span className="inline-block mt-1 px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase bg-amber-100 text-amber-800 rounded">
+                              {slot.slot_type}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Days Cells */}
+                        {slotConfig.working_days.map((day) => {
+                          if (isBreakOrLunch) {
+                            return (
+                              <td key={`${day}-${slot.period_num}`} className="p-3 text-center border-r border-slate-200 text-xs font-semibold text-amber-700 italic bg-amber-50/30">
+                                {slot.name}
+                              </td>
+                            );
+                          }
+
+                          const cell = gridData.find((c) => c.period_num === slot.period_num && c.day === day) || {
+                            period_num: slot.period_num,
+                            day,
+                          };
+
+                          // Check if teacher assigned here has a clash elsewhere
+                          const teacherClashList = cell.teacher_id ? teacherClashes[cell.teacher_id] : null;
+                          const hasClash = teacherClashList && teacherClashList.some((cl) => cl.period_num === slot.period_num && cl.day === day);
+
+                          return (
+                            <td
+                              key={`${day}-${slot.period_num}`}
+                              onDragOver={(e) => e.preventDefault()}
+                              onDrop={(e) => handleDrop(e, slot.period_num, day)}
+                              className={`p-2.5 border-r border-slate-200 relative transition ${
+                                hasClash ? 'bg-rose-50/80 border-rose-300' : 'hover:bg-indigo-50/30'
+                              }`}
+                            >
+                              <div
+                                draggable
+                                onDragStart={(e) => handleDragStart(e, slot.period_num, day)}
+                                className="space-y-2 cursor-grab active:cursor-grabbing"
+                              >
+                                {/* Subject Selector */}
+                                <select
+                                  value={cell.subject_name || ''}
+                                  onChange={(e) => handleCellUpdate(slot.period_num, day, 'subject_name', e.target.value)}
+                                  className="w-full text-xs font-semibold px-2 py-1 bg-white border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                >
+                                  <option value="">-- Subject --</option>
+                                  {subjects.map((sub) => (
+                                    <option key={sub.id} value={sub.subject_name}>
+                                      {sub.subject_name}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                {/* Teacher Selector */}
+                                <select
+                                  value={cell.teacher_id || ''}
+                                  onChange={(e) => handleCellUpdate(slot.period_num, day, 'teacher_id', e.target.value)}
+                                  className={`w-full text-xs px-2 py-1 border rounded focus:outline-none focus:ring-1 ${
+                                    hasClash
+                                      ? 'bg-rose-100 border-rose-400 font-bold text-rose-900 focus:ring-rose-500'
+                                      : 'bg-slate-50 border-slate-200 text-slate-700'
+                                  }`}
+                                >
+                                  <option value="">-- Teacher --</option>
+                                  {teachers.map((t) => (
+                                    <option key={t.id} value={t.id}>
+                                      {t.full_name}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                {/* Clash Alert Badge */}
+                                {hasClash && (
+                                  <div className="flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-100 p-1 rounded">
+                                    <AlertTriangle className="w-3 h-3 text-rose-600 flex-shrink-0" />
+                                    <span>Teacher Busy Elsewhere!</span>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 1 & 2 Placeholders */}
+      {activeTab === 'automate' && (
+        <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center space-y-4">
+          <Sparkles className="w-12 h-12 text-amber-500 mx-auto" />
+          <h2 className="text-xl font-bold text-slate-800">AI Automatic Timetable Engine</h2>
+          <p className="text-slate-500 max-w-lg mx-auto text-sm">
+            Auto-generate optimal zero-clash schedules using constraint logic programming and teacher preferences.
+          </p>
+          <button className="px-6 py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold text-sm rounded-xl shadow transition">
+            Run AI Auto-Scheduler
+          </button>
+        </div>
+      )}
+
+      {activeTab === 'manual' && (
+        <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center space-y-4">
+          <Settings className="w-12 h-12 text-indigo-500 mx-auto" />
+          <h2 className="text-xl font-bold text-slate-800">Teacher Workload & Assignment Matrix</h2>
+          <p className="text-slate-500 max-w-lg mx-auto text-sm">
+            Manage teacher period limits per week and subject assignments.
+          </p>
+          <div className="max-w-xs mx-auto text-left">
+            <label className="block text-xs font-semibold text-slate-500 mb-1">Select Teacher</label>
+            <select
+              value={selectedTeacherId}
+              onChange={(e) => setSelectedTeacherId(e.target.value)}
+              className="w-full p-2 text-sm border border-slate-300 rounded-lg"
+            >
+              <option value="">-- Choose Teacher --</option>
+              {teachers.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.full_name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {/* TIME SLOTS CONFIGURATION MODAL */}
+      {isConfigModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden border border-slate-200">
+            <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+              <h3 className="font-bold text-lg text-slate-900 flex items-center gap-2">
+                <Clock className="w-5 h-5 text-indigo-600" />
+                Configure Time Slots & Working Days
+              </h3>
+              <button onClick={() => setIsConfigModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto space-y-6">
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3">Period Slots</h4>
+                <div className="space-y-3">
+                  {slotConfig.period_slots.map((slot, idx) => (
+                    <div key={slot.period_num} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                      <span className="w-7 h-7 flex items-center justify-center bg-indigo-100 text-indigo-700 rounded-lg text-xs font-bold">
+                        #{slot.period_num}
+                      </span>
+
+                      <input
+                        type="text"
+                        value={slot.name}
+                        onChange={(e) => {
+                          const updated = [...slotConfig.period_slots];
+                          updated[idx].name = e.target.value;
+                          setSlotConfig({ ...slotConfig, period_slots: updated });
+                        }}
+                        className="flex-1 text-xs font-semibold px-2 py-1.5 border border-slate-300 rounded-lg bg-white"
+                        placeholder="Period Name"
+                      />
+
+                      <input
+                        type="time"
+                        value={slot.start_time}
+                        onChange={(e) => {
+                          const updated = [...slotConfig.period_slots];
+                          updated[idx].start_time = e.target.value;
+                          setSlotConfig({ ...slotConfig, period_slots: updated });
+                        }}
+                        className="text-xs px-2 py-1.5 border border-slate-300 rounded-lg bg-white"
+                      />
+
+                      <span className="text-slate-400 text-xs">to</span>
+
+                      <input
+                        type="time"
+                        value={slot.end_time}
+                        onChange={(e) => {
+                          const updated = [...slotConfig.period_slots];
+                          updated[idx].end_time = e.target.value;
+                          setSlotConfig({ ...slotConfig, period_slots: updated });
+                        }}
+                        className="text-xs px-2 py-1.5 border border-slate-300 rounded-lg bg-white"
+                      />
+
+                      <select
+                        value={slot.slot_type}
+                        onChange={(e) => {
+                          const updated = [...slotConfig.period_slots];
+                          updated[idx].slot_type = e.target.value as 'CLASS' | 'BREAK' | 'LUNCH';
+                          setSlotConfig({ ...slotConfig, period_slots: updated });
+                        }}
+                        className="text-xs font-semibold px-2 py-1.5 border border-slate-300 rounded-lg bg-white"
+                      >
+                        <option value="CLASS">CLASS</option>
+                        <option value="BREAK">BREAK</option>
+                        <option value="LUNCH">LUNCH</option>
+                      </select>
+
                       <button
-                        onClick={() => handleDeleteSubject(sub.id, sub.subject_name)}
-                        className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-950/30 rounded-lg transition-all"
+                        onClick={() => {
+                          const updated = slotConfig.period_slots.filter((_, i) => i !== idx);
+                          setSlotConfig({ ...slotConfig, period_slots: updated });
+                        }}
+                        className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
-      {/* TAB 2: ASSIGN TEACHERS */}
-      {activeTab === "teachers" && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2">
-            <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 min-h-[420px]">
-              <div className="flex items-center justify-between mb-5">
-                <h3 className="font-bold text-white flex items-center gap-2">
-                  <UserCheck className="w-4 h-4 text-blue-400" />
-                  Assign Teachers
-                </h3>
-                <span
-                  className={`text-xs font-semibold px-3 py-1 rounded-full border ${
-                    classSubjects.length > 0 && assignedCount === classSubjects.length
-                      ? "bg-emerald-900/30 text-emerald-300 border-emerald-800"
-                      : "bg-slate-800 text-slate-300 border-slate-700"
-                  }`}
-                >
-                  {assignedCount} / {classSubjects.length} assigned
-                </span>
-              </div>
-
-              {isLoading || isLoadingTeachers ? (
-                <div className="flex justify-center py-20">
-                  <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
-                </div>
-              ) : classSubjects.length === 0 ? (
-                <div className="flex flex-col items-center py-16 text-slate-500 border-2 border-dashed border-slate-800 rounded-xl">
-                  <BookOpen className="w-10 h-10 mb-3 text-slate-600" />
-                  <p className="text-sm text-slate-300 font-medium">No subjects found</p>
-                </div>
-              ) : teachers.length === 0 ? (
-                <div className="flex flex-col items-center py-16 text-slate-500 border-2 border-dashed border-slate-800 rounded-xl">
-                  <Users className="w-10 h-10 mb-3 text-slate-600" />
-                  <p className="text-sm text-slate-300 font-medium">No teachers found</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {classSubjects.map((sub) => {
-                    const assigned = assignments[sub.id];
-                    const isAssigning = assigningId === sub.id;
-                    const selectedVal = getAssignedTeacherValue(assigned);
-
-                    const matchingTeachers = teachers.filter((t) => {
-                      const tSubjs = getTeacherSubjects(t);
-                      return tSubjs.some((ts) => matchSubjects(sub.subject_name, ts));
+                <button
+                  onClick={() => {
+                    const nextNum = slotConfig.period_slots.length + 1;
+                    setSlotConfig({
+                      ...slotConfig,
+                      period_slots: [
+                        ...slotConfig.period_slots,
+                        {
+                          period_num: nextNum,
+                          name: `Period ${nextNum}`,
+                          start_time: '13:30',
+                          end_time: '14:15',
+                          slot_type: 'CLASS',
+                        },
+                      ],
                     });
-
-                    const dropdownTeachers = matchingTeachers.length > 0 ? matchingTeachers : teachers;
-
-                    return (
-                      <div
-                        key={sub.id}
-                        className={`flex flex-col sm:flex-row sm:items-center gap-3 p-4 rounded-xl border transition-all ${
-                          assigned
-                            ? "border-emerald-800/50 bg-emerald-950/20"
-                            : "border-amber-800/40 bg-amber-950/10"
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 flex-1 min-w-0">
-                          <div
-                            className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                            style={{
-                              backgroundColor: `${sub.color_code}25`,
-                              border: `1px solid ${sub.color_code}50`,
-                            }}
-                          >
-                            <BookOpen className="w-4 h-4" style={{ color: sub.color_code }} />
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-sm font-bold text-white truncate">
-                              {sub.subject_name}
-                            </p>
-                            <p className="text-xs text-slate-400">
-                              {sub.periods_per_week} periods/week
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 sm:w-[260px]">
-                          {isAssigning ? (
-                            <div className="flex items-center gap-2 text-slate-400 text-sm w-full justify-center py-2">
-                              <Loader2 className="w-4 h-4 animate-spin" /> Saving...
-                            </div>
-                          ) : (
-                            <select
-                              value={selectedVal}
-                              onChange={(e) => handleAssignTeacher(sub.id, e.target.value)}
-                              className="w-full bg-[#0f172a] border border-slate-600 text-white text-sm rounded-lg px-3 py-2.5 outline-none focus:border-blue-500"
-                            >
-                              <option value="">-- Select Teacher --</option>
-                              {dropdownTeachers.map((t) => (
-                                <option key={t.id} value={t.id || t.user_id || t.user?.id}>
-                                  {teacherName(t)} {getTeacherSubjects(t).length > 0 ? `(${getTeacherSubjects(t).join(",")})` : ""}
-                                </option>
-                              ))}
-                            </select>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="lg:col-span-1">
-            <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 sticky top-4">
-              <h3 className="font-bold text-white flex items-center gap-2 mb-1">
-                <Users className="w-4 h-4 text-blue-400" /> Teacher Workload
-              </h3>
-              <p className="text-xs text-slate-500 mb-4">Max {MAX_PERIODS} periods/week</p>
-              
-              {isLoadingTeachers ? (
-                <div className="flex justify-center py-10">
-                  <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
-                </div>
-              ) : workloads.length === 0 && teachers.length === 0 ? (
-                <p className="text-sm text-slate-500 text-center py-8">No data</p>
-              ) : (
-                <div className="space-y-3 max-h-[480px] overflow-y-auto pr-1">
-                  {teachers.map((t) => {
-                    const tid = t.user_id || t.user?.id || t.id;
-                    const w = workloads.find(
-                      (item: any) => item.teacher_id === tid || item.staff_id === t.id
-                    ) || { total_periods: 0, max_periods: MAX_PERIODS };
-
-                    const periods = w.total_periods || 0;
-                    const maxP = w.max_periods || MAX_PERIODS;
-                    const pct = Math.min(100, Math.round((periods / maxP) * 100));
-                    const isOver = periods > maxP;
-                    
-                    return (
-                      <div
-                        key={t.id}
-                        className={`p-3 rounded-xl border ${isOver ? "border-red-800/50 bg-red-950/20" : "border-slate-700/50 bg-slate-800/30"}`}
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <p className="text-sm font-bold text-white truncate pr-2">{teacherName(t)}</p>
-                          <span className={`text-xs font-bold ${isOver ? "text-red-400" : "text-slate-400"}`}>{periods}/{maxP}</span>
-                        </div>
-                        <div className="h-1.5 bg-slate-900 rounded-full overflow-hidden">
-                          <div className={`h-full rounded-full ${isOver ? "bg-red-500" : "bg-blue-500"}`} style={{ width: `${pct}%` }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 3: BUILD GRID */}
-      {activeTab === "timetable" && (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              <CalendarDays className="w-5 h-5 text-blue-400" /> Grid Builder
-            </h2>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={openTimeConfigModal}
-                className="flex items-center gap-1.5 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-all"
-              >
-                <Settings className="w-4 h-4" /> Time Slots
-              </button>
-              <button
-                onClick={handleClearGrid}
-                className="flex items-center gap-1.5 px-4 py-2 bg-red-950/30 hover:bg-red-900/50 border border-red-900 text-red-400 rounded-lg text-sm font-medium transition-all"
-              >
-                <Trash2 className="w-4 h-4" /> Clear
-              </button>
-              <button
-                onClick={handleBulkSave}
-                disabled={isSavingGrid}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-all disabled:opacity-50"
-              >
-                {isSavingGrid ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                Save Timetable
-              </button>
-            </div>
-          </div>
-
-          <div className="flex flex-col lg:flex-row gap-6">
-            {/* LEFT PANEL: DRAGGABLE CHIPS */}
-            <div className="w-full lg:w-72 shrink-0 bg-[#111827] border border-slate-800 rounded-2xl p-4 self-start">
-              <h3 className="font-semibold text-white mb-3 flex items-center justify-between">
-                <span>Subjects</span>
-                <span className="text-xs text-slate-400 bg-slate-800 px-2 py-0.5 rounded">{classSubjects.length} items</span>
-              </h3>
-              <p className="text-xs text-slate-500 mb-4">Drag and drop these subjects into the grid cells.</p>
-              
-              <div className="space-y-3">
-                {classSubjects.map(sub => {
-                  const assigned = assignments[sub.id];
-                  const teacherId = assigned ? getAssignedTeacherValue(assigned) : null;
-                  const t = teacherId ? teachers.find(t => (t.id || t.user_id || t.user?.id) === teacherId) : null;
-                  const tName = t ? teacherName(t) : "Unassigned";
-
-                  const usedCount = gridData.filter(g => g.subject_id === sub.id).length;
-                  const isDone = usedCount >= sub.periods_per_week;
-
-                  return (
-                    <div
-                      key={sub.id}
-                      draggable
-                      onDragStart={(e) => handleDragStart(e, sub.id)}
-                      className={`p-3 rounded-xl border flex flex-col gap-2 cursor-grab active:cursor-grabbing hover:-translate-y-0.5 transition-transform ${
-                        isDone ? "bg-emerald-950/20 border-emerald-900/50" : "bg-slate-800 border-slate-700"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <GripVertical className="w-4 h-4 text-slate-500" />
-                          <div
-                            className="w-3 h-3 rounded-full"
-                            style={{ backgroundColor: sub.color_code || "#3b82f6" }}
-                          />
-                          <span className="text-sm font-bold text-white">{sub.subject_name}</span>
-                        </div>
-                        <span className={`text-xs font-bold ${isDone ? "text-emerald-400" : "text-blue-400"}`}>
-                          {usedCount}/{sub.periods_per_week}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-xs text-slate-400 pl-6">
-                        <UserCheck className="w-3 h-3" /> {tName}
-                      </div>
-                      <div className="h-1 bg-slate-900 rounded-full mt-1 overflow-hidden">
-                         <div 
-                           className={`h-full ${isDone ? "bg-emerald-500" : "bg-blue-500"}`} 
-                           style={{ width: `${Math.min(100, (usedCount / sub.periods_per_week) * 100)}%`}} 
-                         />
-                      </div>
-                    </div>
-                  );
-                })}
-                {classSubjects.length === 0 && (
-                   <p className="text-sm text-slate-500 text-center py-4">No subjects added.</p>
-                )}
+                  }}
+                  className="mt-3 flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Period Slot
+                </button>
               </div>
             </div>
 
-            {/* MAIN GRID */}
-            <div className="flex-1 bg-[#111827] border border-slate-800 rounded-2xl p-4 overflow-x-auto">
-               {isLoadingGrid ? (
-                  <div className="flex flex-col items-center justify-center py-20 h-[400px]">
-                     <Loader2 className="w-8 h-8 animate-spin text-blue-500 mb-4" />
-                     <p className="text-slate-400">Loading Grid Configuration...</p>
-                  </div>
-               ) : !timeConfig ? (
-                  <div className="flex flex-col items-center justify-center py-20 h-[400px] border-2 border-dashed border-slate-800 rounded-xl">
-                     <Clock className="w-10 h-10 text-slate-600 mb-3" />
-                     <p className="text-white font-medium">Time Slots Not Configured</p>
-                     <button onClick={openTimeConfigModal} className="mt-3 text-blue-400 text-sm hover:underline">
-                        Setup Time Slots Now
-                     </button>
-                  </div>
-               ) : (
-                  <table className="w-full text-sm text-left border-collapse min-w-[800px]">
-                    <thead>
-                      <tr>
-                        <th className="p-3 border-b border-r border-slate-700 bg-slate-800/50 text-slate-300 font-semibold w-24 text-center">
-                          Day
-                        </th>
-                        {timeConfig.period_slots.map((p: any, idx: number) => (
-                          <th key={idx} className="p-2 border-b border-r border-slate-700 bg-slate-800/30 text-center min-w-[120px]">
-                            <div className="font-bold text-slate-200">{p.name}</div>
-                            <div className="text-[10px] text-slate-500 font-normal">{p.start} - {p.end}</div>
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(timeConfig.working_days || []).map((day: string) => (
-                        <tr key={day} className="border-b border-slate-800 hover:bg-slate-800/10">
-                          <td className="p-3 border-r border-slate-700 text-slate-300 font-bold text-center bg-slate-800/20 uppercase">
-                            {day.substring(0, 3)}
-                          </td>
-                          {timeConfig.period_slots.map((p: any, idx: number) => {
-                            if (p.type === "BREAK" || p.type === "LUNCH") {
-                               return (
-                                 <td key={idx} className="p-2 border-r border-slate-800 bg-amber-900/10 text-center">
-                                    <div className="text-amber-500/50 text-xs font-bold uppercase tracking-widest rotate-180" style={{ writingMode: 'vertical-rl' }}>
-                                      {p.type}
-                                    </div>
-                                 </td>
-                               )
-                            }
-
-                            const cell = gridData.find(g => g.day_of_week === day && g.period_number === p.period);
-                            const hasClash = clashWarnings[`${day}-${p.period}`];
-
-                            return (
-                              <td
-                                key={idx}
-                                className={`p-2 border-r border-slate-800 transition-all ${
-                                  cell ? (hasClash ? "bg-red-950/20 border-red-900/50" : "bg-blue-950/10 hover:bg-blue-900/20") : "bg-[#0f172a] hover:bg-slate-800/50"
-                                }`}
-                                onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
-                                onDrop={(e) => handleDrop(e, day, p.period)}
-                              >
-                                {cell ? (
-                                   <div className={`relative group flex flex-col items-center justify-center p-2 rounded-lg border ${hasClash ? 'border-red-500/50' : 'border-blue-800/50'}`}>
-                                      <div className="text-xs font-bold text-white text-center mb-1 leading-tight">
-                                        {cell.subject_name}
-                                      </div>
-                                      <div className="text-[10px] text-slate-400 text-center max-w-full truncate px-1">
-                                        {cell.teacher_name || "No Teacher"}
-                                      </div>
-                                      {hasClash && (
-                                         <div className="absolute -top-2 -right-2 bg-red-600 rounded-full p-0.5 shadow-lg group-hover:scale-110 transition-transform" title={hasClash}>
-                                            <AlertTriangle className="w-3 h-3 text-white" />
-                                         </div>
-                                      )}
-                                      <button 
-                                        onClick={() => handleRemoveCell(day, p.period)}
-                                        className="absolute -top-2 -left-2 bg-slate-700 hover:bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-all shadow-lg"
-                                      >
-                                        <X className="w-3 h-3" />
-                                      </button>
-                                   </div>
-                                ) : (
-                                   <div className="w-full h-full min-h-[60px] flex items-center justify-center border-2 border-dashed border-slate-700/50 rounded-lg text-slate-600 text-[10px] uppercase font-bold tracking-wider">
-                                     Drop
-                                   </div>
-                                )}
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-               )}
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-end gap-3">
+              <button
+                onClick={() => setIsConfigModalOpen(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-xl transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveConfig}
+                disabled={isSavingConfig}
+                className="px-5 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl transition flex items-center gap-2"
+              >
+                {isSavingConfig ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                Save Configuration
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* TIME CONFIG MODAL */}
-      {isTimeModalOpen && tempTimeConfig && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-[#111827] border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl">
-             <div className="flex items-center justify-between p-5 border-b border-slate-800">
-                <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                   <Clock className="w-5 h-5 text-blue-400" />
-                   Configure Time Slots
-                </h2>
-                <button onClick={() => setIsTimeModalOpen(false)} className="text-slate-400 hover:text-white">
-                  <X className="w-5 h-5" />
-                </button>
-             </div>
-             
-             <div className="p-5 overflow-y-auto flex-1 space-y-6">
-                <div>
-                   <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 block">Working Days</label>
-                   <div className="flex flex-wrap gap-2">
-                     {["MON","TUE","WED","THU","FRI","SAT","SUN"].map(d => {
-                        const active = tempTimeConfig.working_days.includes(d);
-                        return (
-                          <button
-                            key={d}
-                            onClick={() => {
-                               setTempTimeConfig((prev: any) => ({
-                                  ...prev,
-                                  working_days: active ? prev.working_days.filter((x: string) => x !== d) : [...prev.working_days, d]
-                               }))
-                            }}
-                            className={`px-4 py-2 rounded-lg text-sm font-bold border transition-all ${
-                              active ? "bg-blue-600 text-white border-blue-500" : "bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700"
-                            }`}
-                          >
-                            {d}
-                          </button>
-                        )
-                     })}
-                   </div>
-                </div>
+      {/* CLONE GRID MODAL */}
+      {isCloneModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 border border-slate-200 space-y-4">
+            <h3 className="font-bold text-lg text-slate-900 flex items-center gap-2">
+              <Copy className="w-5 h-5 text-indigo-600" />
+              Clone Grid to Another Section
+            </h3>
+            <p className="text-xs text-slate-500">
+              Copy current class timetable grid and time slot structure to another target class/section.
+            </p>
 
-                <div>
-                   <div className="flex items-center justify-between mb-3">
-                     <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">Periods & Breaks</label>
-                     <button 
-                       onClick={() => {
-                          const newP = {
-                             period: tempTimeConfig.period_slots.length + 1,
-                             name: `P${tempTimeConfig.period_slots.length + 1}`,
-                             start: "00:00",
-                             end: "00:00",
-                             type: "CLASS"
-                          };
-                          setTempTimeConfig((p: any) => ({ ...p, period_slots: [...p.period_slots, newP] }));
-                       }}
-                       className="text-xs font-bold text-blue-400 hover:underline flex items-center gap-1"
-                     >
-                       <Plus className="w-3 h-3" /> Add Slot
-                     </button>
-                   </div>
-                   
-                   <div className="space-y-2">
-                     {tempTimeConfig.period_slots.map((slot: any, idx: number) => (
-                        <div key={idx} className="flex flex-wrap sm:flex-nowrap items-center gap-2 bg-[#0f172a] p-2 rounded-lg border border-slate-800">
-                           <input 
-                             type="text" 
-                             value={slot.name}
-                             onChange={(e) => {
-                                const arr = [...tempTimeConfig.period_slots];
-                                arr[idx].name = e.target.value;
-                                setTempTimeConfig({...tempTimeConfig, period_slots: arr});
-                             }}
-                             className="w-20 bg-slate-900 border border-slate-700 text-white text-sm rounded px-2 py-1.5 outline-none"
-                             placeholder="Name (P1)"
-                           />
-                           <input 
-                             type="time" 
-                             value={slot.start}
-                             onChange={(e) => {
-                                const arr = [...tempTimeConfig.period_slots];
-                                arr[idx].start = e.target.value;
-                                setTempTimeConfig({...tempTimeConfig, period_slots: arr});
-                             }}
-                             className="w-28 bg-slate-900 border border-slate-700 text-white text-sm rounded px-2 py-1.5 outline-none"
-                           />
-                           <span className="text-slate-500 text-xs">to</span>
-                           <input 
-                             type="time" 
-                             value={slot.end}
-                             onChange={(e) => {
-                                const arr = [...tempTimeConfig.period_slots];
-                                arr[idx].end = e.target.value;
-                                setTempTimeConfig({...tempTimeConfig, period_slots: arr});
-                             }}
-                             className="w-28 bg-slate-900 border border-slate-700 text-white text-sm rounded px-2 py-1.5 outline-none"
-                           />
-                           <select 
-                             value={slot.type}
-                             onChange={(e) => {
-                                const arr = [...tempTimeConfig.period_slots];
-                                arr[idx].type = e.target.value;
-                                setTempTimeConfig({...tempTimeConfig, period_slots: arr});
-                             }}
-                             className="w-28 bg-slate-900 border border-slate-700 text-white text-sm rounded px-2 py-1.5 outline-none"
-                           >
-                              <option value="CLASS">Class</option>
-                              <option value="BREAK">Break</option>
-                              <option value="LUNCH">Lunch</option>
-                           </select>
-                           
-                           <button 
-                             onClick={() => {
-                               const arr = tempTimeConfig.period_slots.filter((_: any, i: number) => i !== idx);
-                               // Re-index periods
-                               arr.forEach((a: any, i: number) => { a.period = i + 1; });
-                               setTempTimeConfig({...tempTimeConfig, period_slots: arr});
-                             }}
-                             className="p-1.5 text-slate-500 hover:text-red-400 rounded-lg ml-auto"
-                           >
-                             <Trash2 className="w-4 h-4" />
-                           </button>
-                        </div>
-                     ))}
-                   </div>
-                </div>
-             </div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Target Class</label>
+                <select
+                  value={targetClassId}
+                  onChange={(e) => setTargetClassId(e.target.value)}
+                  className="w-full text-xs p-2 border border-slate-300 rounded-lg"
+                >
+                  <option value="">-- Choose Target Class --</option>
+                  {classes.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.class_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-             <div className="p-4 border-t border-slate-800 bg-slate-900/50 flex justify-end gap-3 rounded-b-2xl">
-                <button 
-                  onClick={() => setIsTimeModalOpen(false)}
-                  className="px-5 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-800"
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Target Section</label>
+                <select
+                  value={targetSectionId}
+                  onChange={(e) => setTargetSectionId(e.target.value)}
+                  className="w-full text-xs p-2 border border-slate-300 rounded-lg"
                 >
-                  Cancel
-                </button>
-                <button 
-                  onClick={saveTimeConfig}
-                  className="px-5 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-2 shadow-lg shadow-blue-900/20"
-                >
-                  <Save className="w-4 h-4" /> Save Configuration
-                </button>
-             </div>
+                  <option value="">-- Choose Target Section --</option>
+                  {sections.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.section_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
+              <button
+                onClick={() => setIsCloneModalOpen(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCloneGrid}
+                className="px-5 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow"
+              >
+                Copy Timetable
+              </button>
+            </div>
           </div>
         </div>
       )}
