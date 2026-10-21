@@ -2,8 +2,6 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { useParams } from "next/navigation";
-import { api } from "@/lib/api";
-import { toast } from "react-hot-toast";
 import {
   BookOpen,
   Users,
@@ -19,6 +17,118 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
+// --- INTERNAL ZERO-DEPENDENCY API & TOAST ENGINE ---
+const API_BASE_URL = "https://weaischool-backend.onrender.com/api/v1";
+
+const getSlugFromUrl = (): string => {
+  if (typeof window === "undefined") return "ppps";
+  const pathParts = window.location.pathname.split("/");
+  const schoolIdx = pathParts.indexOf("school");
+  if (schoolIdx !== -1 && pathParts[schoolIdx + 1]) {
+    return pathParts[schoolIdx + 1];
+  }
+  return "ppps";
+};
+
+const getAuthToken = (): string => {
+  if (typeof window === "undefined") return "";
+  const directKeys = [
+    "token",
+    "access_token",
+    "jwt",
+    "auth_token",
+    "bearer_token",
+    "weai_token",
+    "accessToken",
+    "authToken",
+  ];
+  for (const k of directKeys) {
+    const val = localStorage.getItem(k) || sessionStorage.getItem(k);
+    if (val && val !== "null" && val !== "undefined") {
+      const clean = val.replace(/^"|"$/g, "").trim();
+      if (clean) return clean;
+    }
+  }
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      const rawVal = localStorage.getItem(key);
+      if (!rawVal) continue;
+      const trimmed = rawVal.replace(/^"|"$/g, "").trim();
+      if (trimmed.startsWith("eyJ") && trimmed.length > 20) return trimmed;
+      try {
+        const parsed = JSON.parse(rawVal);
+        if (parsed && typeof parsed === "object") {
+          const t =
+            parsed.state?.token ||
+            parsed.state?.access_token ||
+            parsed.token ||
+            parsed.access_token ||
+            parsed.user?.token;
+          if (typeof t === "string" && t.trim()) return t.trim();
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
+  return "";
+};
+
+const requestWithRetry = async (endpoint: string, options: RequestInit = {}, retries = 3) => {
+  const token = getAuthToken();
+  const slug = getSlugFromUrl();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...((options.headers as Record<string, string>) || {}),
+  };
+  if (token) headers["Authorization"] = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+  if (slug) headers["X-School-Slug"] = slug;
+
+  const cleanEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  const url = `${API_BASE_URL}${cleanEndpoint}`;
+
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(url, { ...options, headers });
+      if (res.ok) {
+        if (res.status === 204) return { data: [] };
+        const data = await res.json();
+        return { data };
+      }
+      if (attempt === retries) {
+        const errData = await res.json().catch(() => ({}));
+        const err: any = new Error(`Request failed with status ${res.status}`);
+        err.response = { status: res.status, data: errData };
+        throw err;
+      }
+    } catch (err) {
+      if (attempt === retries) throw err;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+  return { data: [] };
+};
+
+const api = {
+  get: (url: string) => requestWithRetry(url, { method: "GET" }),
+  post: (url: string, body?: any) =>
+    requestWithRetry(url, { method: "POST", body: JSON.stringify(body) }),
+  patch: (url: string, body?: any) =>
+    requestWithRetry(url, { method: "PATCH", body: JSON.stringify(body) }),
+  delete: (url: string) => requestWithRetry(url, { method: "DELETE" }),
+};
+
+let toastListener: ((msg: string, type: "success" | "error" | "warning" | "info") => void) | null =
+  null;
+
+const toast = {
+  success: (msg: string) => toastListener && toastListener(msg, "success"),
+  error: (msg: string) => toastListener && toastListener(msg, "error"),
+  warning: (msg: string) => toastListener && toastListener(msg, "warning"),
+  info: (msg: string) => toastListener && toastListener(msg, "info"),
+};
+
+// --- DATA & CONSTANTS ---
 const QUICK_SUBJECTS = [
   { name: "Mathematics", color: "#3B82F6" },
   { name: "English", color: "#10B981" },
@@ -34,23 +144,18 @@ const QUICK_SUBJECTS = [
 
 const MAX_PERIODS = 30;
 
-// Normalize subject names for precise matching
 const normalizeSubject = (str: string): string => {
   if (!str) return "";
   return str.toLowerCase().replace(/[^a-z0-9]/g, "");
 };
 
-// Precise subject matching using discrete synonym groups
 const matchSubjects = (classSubjectName: string, teacherSubjectName: string): boolean => {
   const normClass = normalizeSubject(classSubjectName);
   const normTeacher = normalizeSubject(teacherSubjectName);
 
   if (!normClass || !normTeacher) return false;
-
-  // Direct exact match
   if (normClass === normTeacher) return true;
 
-  // Discrete Synonym Groups
   const synonymGroups: string[][] = [
     ["mathematics", "maths", "math", "quantitative"],
     ["informationtechnology", "it", "computer", "computers", "computerscience", "cs", "ip"],
@@ -75,7 +180,6 @@ const matchSubjects = (classSubjectName: string, teacherSubjectName: string): bo
   return false;
 };
 
-// Comprehensive Subject Extraction from Staff Profiles
 const getTeacherSubjects = (t: any): string[] => {
   if (!t) return [];
   const found: string[] = [];
@@ -187,9 +291,25 @@ export default function TimetableBuilderPage() {
   const [isLoadingTeachers, setIsLoadingTeachers] = useState(false);
   const [assigningId, setAssigningId] = useState<string | null>(null);
 
-  // Tab 3 states (Grid Builder)
+  // Tab 3 states
   const [gridData, setGridData] = useState<Record<string, any>>({});
   const [isSavingGrid, setIsSavingGrid] = useState(false);
+
+  // Floating Toast State
+  const [toastBanner, setToastBanner] = useState<{
+    msg: string;
+    type: "success" | "error" | "warning" | "info";
+  } | null>(null);
+
+  useEffect(() => {
+    toastListener = (msg, type) => {
+      setToastBanner({ msg, type });
+      setTimeout(() => setToastBanner(null), 4000);
+    };
+    return () => {
+      toastListener = null;
+    };
+  }, []);
 
   const daysList = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const timeSlots = [
@@ -221,14 +341,13 @@ export default function TimetableBuilderPage() {
     return n || t.email || "Teacher";
   };
 
-  // 1. Fetch Classes on mount (FIXED: Improved array extraction)
+  // 1. Fetch Classes on mount
   useEffect(() => {
     const fetchClasses = async () => {
       try {
         let res = await api.get("/classes");
         let data = res.data;
-        
-        // Deep array extraction fix for Render / various backend responses
+
         if (!Array.isArray(data)) {
           if (Array.isArray(data?.data)) data = data.data;
           else if (Array.isArray(data?.items)) data = data.items;
@@ -236,13 +355,12 @@ export default function TimetableBuilderPage() {
           else data = [];
         }
 
-        // Fallback endpoint if first one returns empty
         if (data.length === 0) {
           try {
-             const fbRes = await api.get("/academics/classes");
-             if (Array.isArray(fbRes.data)) data = fbRes.data;
-             else if (Array.isArray(fbRes.data?.data)) data = fbRes.data.data;
-          } catch(e) {}
+            const fbRes = await api.get("/academics/classes");
+            if (Array.isArray(fbRes.data)) data = fbRes.data;
+            else if (Array.isArray(fbRes.data?.data)) data = fbRes.data.data;
+          } catch (e) {}
         }
 
         setClasses(data);
@@ -279,7 +397,7 @@ export default function TimetableBuilderPage() {
         const res = await api.get(`/classes/${selectedClassId}/sections`);
         let secData = res.data || [];
         if (!Array.isArray(secData) && Array.isArray(secData.data)) secData = secData.data;
-        
+
         setSections(secData);
         if (secData.length > 0) {
           setSelectedSectionId(secData[0].id);
@@ -329,7 +447,7 @@ export default function TimetableBuilderPage() {
     const fetchSuggestions = async () => {
       try {
         const res = await api.get(`/class-subjects/suggestions?query=${subjectQuery}`);
-        setApiSuggestions(res.data.suggestions || []);
+        setApiSuggestions(res.data?.suggestions || []);
       } catch (error) {
         setApiSuggestions([]);
       }
@@ -338,7 +456,7 @@ export default function TimetableBuilderPage() {
     return () => clearTimeout(debounce);
   }, [subjectQuery]);
 
-  // 5. Load Teachers + Assignments + Workloads when Tab 2 or 3 opens
+  // 5. Load Teachers + Assignments + Workloads
   useEffect(() => {
     if ((activeTab !== "teachers" && activeTab !== "timetable") || !selectedClassId) return;
 
@@ -359,7 +477,6 @@ export default function TimetableBuilderPage() {
           }
         }
 
-        // Fetch full profile details for all teachers to ensure extras are loaded
         const enrichedTeachers = await Promise.all(
           teacherList.map(async (t) => {
             const staffId = t.id || t.user_id || t.user?.id;
@@ -379,7 +496,7 @@ export default function TimetableBuilderPage() {
           let aUrl = `/teacher-assignments?class_id=${selectedClassId}`;
           if (selectedSectionId) aUrl += `&section_id=${selectedSectionId}`;
           const aRes = await api.get(aUrl);
-          const list = Array.isArray(aRes.data) ? aRes.data : (aRes.data?.data || []);
+          const list = Array.isArray(aRes.data) ? aRes.data : aRes.data?.data || [];
           const map: Record<string, any> = {};
           list.forEach((a: any) => {
             map[a.class_subject_id] = a;
@@ -391,7 +508,7 @@ export default function TimetableBuilderPage() {
 
         try {
           const wRes = await api.get("/teacher-assignments/workload/all");
-          const wData = Array.isArray(wRes.data) ? wRes.data : (wRes.data?.data || []);
+          const wData = Array.isArray(wRes.data) ? wRes.data : wRes.data?.data || [];
           setWorkloads(wData);
         } catch {
           setWorkloads([]);
@@ -404,7 +521,7 @@ export default function TimetableBuilderPage() {
     loadTab2();
   }, [activeTab, selectedClassId, selectedSectionId]);
 
-  // Load Saved Grid Data from LocalStorage when switching to Tab 3
+  // Load Saved Grid
   useEffect(() => {
     if (activeTab === "timetable" && selectedClassId && selectedSectionId) {
       const cacheKey = `grid_${selectedClassId}_${selectedSectionId}`;
@@ -415,10 +532,9 @@ export default function TimetableBuilderPage() {
         } else {
           setGridData({});
         }
-      } catch(e) {}
+      } catch (e) {}
     }
   }, [activeTab, selectedClassId, selectedSectionId]);
-
 
   const getDisplayedChips = () => {
     let chips: any[] = [];
@@ -445,7 +561,11 @@ export default function TimetableBuilderPage() {
     displayedChips.some((c) => c.name.toLowerCase() === subjectQuery.toLowerCase().trim()) ||
     classSubjects.some((cs) => cs.subject_name.toLowerCase() === subjectQuery.toLowerCase().trim());
 
-  const handleAddSubject = async (name: string, color: string = "#3B82F6", isCustom: boolean = false) => {
+  const handleAddSubject = async (
+    name: string,
+    color: string = "#3B82F6",
+    isCustom: boolean = false
+  ) => {
     if (!selectedClassId) {
       toast.error("Please select a class first");
       return;
@@ -473,7 +593,11 @@ export default function TimetableBuilderPage() {
     }
   };
 
-  const handleUpdatePeriods = async (subjectId: string, currentPeriods: number, delta: number) => {
+  const handleUpdatePeriods = async (
+    subjectId: string,
+    currentPeriods: number,
+    delta: number
+  ) => {
     const newPeriods = currentPeriods + delta;
     if (newPeriods < 1 || newPeriods > 20) return;
 
@@ -523,16 +647,16 @@ export default function TimetableBuilderPage() {
 
       try {
         const wRes = await api.get("/teacher-assignments/workload/all");
-        const wData = Array.isArray(wRes.data) ? wRes.data : (wRes.data?.data || []);
+        const wData = Array.isArray(wRes.data) ? wRes.data : wRes.data?.data || [];
         setWorkloads(wData);
       } catch {}
 
       if (res.data?.is_overloaded) {
         toast.warning(
-          `${res.data.teacher_name} is now at ${res.data.current_workload}/30 periods - overloaded, but saved.`
+          `${res.data.teacher_name} is now at ${res.data.current_workload}/30 periods - overloaded.`
         );
       } else {
-        toast.success(`Assigned to ${res.data.teacher_name || 'Teacher'}`);
+        toast.success(`Assigned to ${res.data.teacher_name || "Teacher"}`);
       }
     } catch (e: any) {
       const detail = e.response?.data?.detail || e.response?.data?.message || e.message;
@@ -566,7 +690,7 @@ export default function TimetableBuilderPage() {
     return classSubjects.filter((s) => assignments[s.id]?.teacher_id).length;
   }, [classSubjects, assignments]);
 
-  // --- TAB 3 DRAG AND DROP HANDLERS ---
+  // Tab 3 Handlers
   const handleDragStart = (e: React.DragEvent, subject: any) => {
     e.dataTransfer.setData("application/json", JSON.stringify(subject));
   };
@@ -576,11 +700,12 @@ export default function TimetableBuilderPage() {
     try {
       const subject = JSON.parse(e.dataTransfer.getData("application/json"));
       const key = `${day}-${slotId}`;
-      
-      // Auto fetch assigned teacher for this subject
+
       const assignment = assignments[subject.id];
       const teacherId = getAssignedTeacherValue(assignment);
-      const teacherObj = teacherId ? teachers.find(t => (t.id === teacherId || t.user_id === teacherId || t.user?.id === teacherId)) : null;
+      const teacherObj = teacherId
+        ? teachers.find((t) => t.id === teacherId || t.user_id === teacherId || t.user?.id === teacherId)
+        : null;
 
       setGridData((prev) => ({
         ...prev,
@@ -588,8 +713,8 @@ export default function TimetableBuilderPage() {
           subject_id: subject.id,
           subject_name: subject.subject_name,
           color: subject.color_code || "#3B82F6",
-          teacher_name: teacherObj ? teacherName(teacherObj) : "Unassigned"
-        }
+          teacher_name: teacherObj ? teacherName(teacherObj) : "Unassigned",
+        },
       }));
     } catch (err) {
       console.error("Drop error", err);
@@ -608,20 +733,16 @@ export default function TimetableBuilderPage() {
   const handleSaveGrid = async () => {
     setIsSavingGrid(true);
     try {
-      // Local caching strategy
       const cacheKey = `grid_${selectedClassId}_${selectedSectionId}`;
       localStorage.setItem(cacheKey, JSON.stringify(gridData));
-      
-      // Attempt backend save if endpoint exists
+
       try {
         await api.post("/timetable/grid", {
-           class_id: selectedClassId,
-           section_id: selectedSectionId,
-           grid: gridData
+          class_id: selectedClassId,
+          section_id: selectedSectionId,
+          grid: gridData,
         });
-      } catch (err) {
-         // Graceful fallback if endpoint isn't fully ready yet
-      }
+      } catch (err) {}
 
       toast.success("Timetable grid saved successfully!");
     } catch (error) {
@@ -633,6 +754,21 @@ export default function TimetableBuilderPage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6 text-slate-200">
+      {/* Toast Notice Banner */}
+      {toastBanner && (
+        <div
+          className={`fixed bottom-6 right-6 z-50 px-5 py-3 rounded-xl shadow-xl text-sm font-medium border animate-bounce ${
+            toastBanner.type === "success"
+              ? "bg-emerald-950/90 text-emerald-200 border-emerald-500/40"
+              : toastBanner.type === "error"
+              ? "bg-rose-950/90 text-rose-200 border-rose-500/40"
+              : "bg-amber-950/90 text-amber-200 border-amber-500/40"
+          }`}
+        >
+          {toastBanner.msg}
+        </div>
+      )}
+
       {/* HEADER */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -924,14 +1060,13 @@ export default function TimetableBuilderPage() {
                     const isAssigning = assigningId === sub.id;
                     const selectedVal = getAssignedTeacherValue(assigned);
 
-                    // Filter matching teachers based on profile subjects
                     const matchingTeachers = teachers.filter((t) => {
                       const tSubjs = getTeacherSubjects(t);
                       return tSubjs.some((ts) => matchSubjects(sub.subject_name, ts));
                     });
 
-                    // If matching teachers exist, show them. Otherwise show ALL available teachers so admin can assign easily
-                    const dropdownTeachers = matchingTeachers.length > 0 ? matchingTeachers : teachers;
+                    const dropdownTeachers =
+                      matchingTeachers.length > 0 ? matchingTeachers : teachers;
 
                     return (
                       <div
@@ -985,7 +1120,8 @@ export default function TimetableBuilderPage() {
                                 const tag = tSubjs.length > 0 ? ` (${tSubjs.join(", ")})` : "";
                                 return (
                                   <option key={t.id} value={realTeacherId}>
-                                    {teacherName(t)}{tag}
+                                    {teacherName(t)}
+                                    {tag}
                                   </option>
                                 );
                               })}
@@ -1000,15 +1136,12 @@ export default function TimetableBuilderPage() {
             </div>
           </div>
 
-          {/* RIGHT: Workload panel with transparent profile subject status */}
           <div className="lg:col-span-1">
             <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 sticky top-4">
               <h3 className="font-bold text-white flex items-center gap-2 mb-1">
                 <Users className="w-4 h-4 text-blue-400" /> Teacher Workload
               </h3>
-              <p className="text-xs text-slate-500 mb-4">
-                Max {MAX_PERIODS} periods/week
-              </p>
+              <p className="text-xs text-slate-500 mb-4">Max {MAX_PERIODS} periods/week</p>
 
               {isLoadingTeachers ? (
                 <div className="flex justify-center py-10">
@@ -1069,7 +1202,6 @@ export default function TimetableBuilderPage() {
                           </span>
                         </div>
 
-                        {/* EXPLICIT PROFILE SUBJECT DISPLAY */}
                         <div className="text-[11px] mb-2 font-medium">
                           {tSubjects.length > 0 ? (
                             <span className="text-emerald-400 bg-emerald-950/40 border border-emerald-800/40 px-2 py-0.5 rounded inline-block truncate max-w-full">
@@ -1113,7 +1245,9 @@ export default function TimetableBuilderPage() {
             </div>
             <div className="flex items-center gap-3">
               <button
-                onClick={() => { if(confirm('Clear entire grid?')) setGridData({}) }}
+                onClick={() => {
+                  if (confirm("Clear entire grid?")) setGridData({});
+                }}
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-xl text-sm font-medium transition-all"
               >
                 Clear Grid
@@ -1123,33 +1257,47 @@ export default function TimetableBuilderPage() {
                 disabled={isSavingGrid}
                 className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl shadow-lg shadow-blue-900/20 text-sm font-medium transition-all flex items-center gap-2"
               >
-                {isSavingGrid ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                {isSavingGrid ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-4 h-4" />
+                )}
                 Save Timetable
               </button>
             </div>
           </div>
 
-          {/* Draggable Subjects Palette */}
           <div className="bg-[#111827] p-4 rounded-xl border border-slate-800 shadow-sm">
-            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Available Subjects</h4>
+            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">
+              Available Subjects
+            </h4>
             {classSubjects.length === 0 ? (
-               <p className="text-sm text-slate-500">No subjects configured. Go to Tab 1 to add them.</p>
+              <p className="text-sm text-slate-500">
+                No subjects configured. Go to Tab 1 to add them.
+              </p>
             ) : (
-              <div className="flex gap-3 overflow-x-auto pb-2 custom-scrollbar">
+              <div className="flex gap-3 overflow-x-auto pb-2">
                 {classSubjects.map((sub) => {
-                   const assignMent = assignments[sub.id];
-                   const teachId = getAssignedTeacherValue(assignMent);
-                   const tObj = teachId ? teachers.find((t) => t.id === teachId || t.user_id === teachId) : null;
+                  const assignMent = assignments[sub.id];
+                  const teachId = getAssignedTeacherValue(assignMent);
+                  const tObj = teachId
+                    ? teachers.find((t) => t.id === teachId || t.user_id === teachId)
+                    : null;
 
-                   return (
+                  return (
                     <div
                       key={sub.id}
                       draggable
                       onDragStart={(e) => handleDragStart(e, sub)}
                       className="flex-shrink-0 cursor-grab active:cursor-grabbing px-4 py-2.5 rounded-xl border bg-[#0f172a] hover:bg-slate-800 transition-colors flex flex-col min-w-[130px] shadow-sm relative group"
-                      style={{ borderBottom: `3px solid ${sub.color_code || '#3B82F6'}`, borderColor: 'rgba(51, 65, 85, 0.5)' }}
+                      style={{
+                        borderBottom: `3px solid ${sub.color_code || "#3B82F6"}`,
+                        borderColor: "rgba(51, 65, 85, 0.5)",
+                      }}
                     >
-                      <span className="text-sm font-bold text-slate-200 truncate">{sub.subject_name}</span>
+                      <span className="text-sm font-bold text-slate-200 truncate">
+                        {sub.subject_name}
+                      </span>
                       <span className="text-[10px] text-slate-400 truncate mt-0.5">
                         {tObj ? teacherName(tObj) : "Unassigned"}
                       </span>
@@ -1160,7 +1308,6 @@ export default function TimetableBuilderPage() {
             )}
           </div>
 
-          {/* The Main Grid Table */}
           <div className="bg-[#111827] rounded-2xl border border-slate-800 shadow-sm overflow-x-auto">
             <table className="w-full text-left border-collapse min-w-[900px]">
               <thead>
@@ -1170,7 +1317,11 @@ export default function TimetableBuilderPage() {
                   </th>
                   {timeSlots.map((slot) => (
                     <th key={slot.id} className="p-3 border-r border-slate-800 text-center">
-                      <div className={`text-xs font-bold ${slot.isBreak ? 'text-amber-400' : 'text-slate-300'}`}>
+                      <div
+                        className={`text-xs font-bold ${
+                          slot.isBreak ? "text-amber-400" : "text-slate-300"
+                        }`}
+                      >
                         {slot.label}
                       </div>
                       <div className="text-[10px] text-slate-500 font-normal mt-0.5">
@@ -1182,14 +1333,20 @@ export default function TimetableBuilderPage() {
               </thead>
               <tbody>
                 {daysList.map((day) => (
-                  <tr key={day} className="border-b border-slate-800/60 hover:bg-slate-800/20 transition-colors">
+                  <tr
+                    key={day}
+                    className="border-b border-slate-800/60 hover:bg-slate-800/20 transition-colors"
+                  >
                     <td className="p-4 text-sm font-bold text-slate-300 bg-[#0f172a]/30 border-r border-slate-800">
                       {day}
                     </td>
                     {timeSlots.map((slot) => {
                       if (slot.isBreak) {
                         return (
-                          <td key={slot.id} className="p-2 border-r border-slate-800 bg-slate-800/30 text-center text-[10px] text-slate-500 font-bold uppercase tracking-widest">
+                          <td
+                            key={slot.id}
+                            className="p-2 border-r border-slate-800 bg-slate-800/30 text-center text-[10px] text-slate-500 font-bold uppercase tracking-widest"
+                          >
                             Break
                           </td>
                         );
@@ -1206,11 +1363,11 @@ export default function TimetableBuilderPage() {
                           className="p-2 border-r border-slate-800 h-[84px] min-w-[130px] relative group transition-colors hover:bg-blue-900/10"
                         >
                           {cellData ? (
-                            <div 
+                            <div
                               className="h-full w-full rounded-xl p-2.5 flex flex-col justify-between shadow-sm"
-                              style={{ 
-                                backgroundColor: `${cellData.color}15`, 
-                                border: `1px solid ${cellData.color}40` 
+                              style={{
+                                backgroundColor: `${cellData.color}15`,
+                                border: `1px solid ${cellData.color}40`,
                               }}
                             >
                               <div className="flex justify-between items-start gap-1">
