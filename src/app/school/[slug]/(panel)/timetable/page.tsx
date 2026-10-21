@@ -2,8 +2,6 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { useParams } from "next/navigation";
-import { api } from "@/lib/api";
-import { toast } from "react-hot-toast";
 import {
   BookOpen,
   Users,
@@ -21,7 +19,7 @@ import {
   Save,
   Copy,
   X,
-  Settings
+  Check
 } from "lucide-react";
 
 const QUICK_SUBJECTS = [
@@ -39,7 +37,91 @@ const QUICK_SUBJECTS = [
 
 const MAX_PERIODS = 30;
 
-// Grid Interfaces
+// Internal API Wrapper to replace missing @/lib/api
+const API_BASE = "https://weaischool-backend.onrender.com/api/v1";
+
+const getAuthToken = () => {
+  if (typeof window === "undefined") return "";
+  const authStr = localStorage.getItem("school_auth");
+  if (authStr) {
+    try {
+      const parsed = JSON.parse(authStr);
+      return parsed.access_token || parsed.token || "";
+    } catch (e) {
+      return authStr;
+    }
+  }
+  return localStorage.getItem("token") || "";
+};
+
+const api = {
+  get: async (url: string) => {
+    const token = getAuthToken();
+    const res = await fetch(`${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw { response: { data: errorData, status: res.status }, message: errorData.detail || "Request failed" };
+    }
+    const data = await res.json();
+    return { data };
+  },
+  post: async (url: string, body?: any) => {
+    const token = getAuthToken();
+    const res = await fetch(`${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw { response: { data: errorData, status: res.status }, message: errorData.detail || "Request failed" };
+    }
+    const data = await res.json();
+    return { data };
+  },
+  patch: async (url: string, body?: any) => {
+    const token = getAuthToken();
+    const res = await fetch(`${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw { response: { data: errorData, status: res.status }, message: errorData.detail || "Request failed" };
+    }
+    const data = await res.json();
+    return { data };
+  },
+  delete: async (url: string) => {
+    const token = getAuthToken();
+    const res = await fetch(`${API_BASE}${url.startsWith("/") ? "" : "/"}${url}`, {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw { response: { data: errorData, status: res.status }, message: errorData.detail || "Request failed" };
+    }
+    const data = await res.json();
+    return { data };
+  },
+};
+
 interface TimeSlot {
   period_num: number;
   name: string;
@@ -81,23 +163,19 @@ const DEFAULT_SLOTS: TimeSlot[] = [
 
 const DEFAULT_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-// Normalize subject names for precise matching
+// Subject normalization
 const normalizeSubject = (str: string): string => {
   if (!str) return "";
   return str.toLowerCase().replace(/[^a-z0-9]/g, "");
 };
 
-// Precise subject matching using discrete synonym groups
 const matchSubjects = (classSubjectName: string, teacherSubjectName: string): boolean => {
   const normClass = normalizeSubject(classSubjectName);
   const normTeacher = normalizeSubject(teacherSubjectName);
 
   if (!normClass || !normTeacher) return false;
-
-  // Direct exact match
   if (normClass === normTeacher) return true;
 
-  // Discrete Synonym Groups
   const synonymGroups: string[][] = [
     ["mathematics", "maths", "math", "quantitative"],
     ["informationtechnology", "it", "computer", "computers", "computerscience", "cs", "ip"],
@@ -122,7 +200,6 @@ const matchSubjects = (classSubjectName: string, teacherSubjectName: string): bo
   return false;
 };
 
-// Comprehensive Subject Extraction from Staff Profiles
 const getTeacherSubjects = (t: any): string[] => {
   if (!t) return [];
   const found: string[] = [];
@@ -165,11 +242,7 @@ const getTeacherSubjects = (t: any): string[] => {
 
   let extras = t.extras;
   if (typeof extras === "string") {
-    try {
-      extras = JSON.parse(extras);
-    } catch (e) {
-      extras = null;
-    }
+    try { extras = JSON.parse(extras); } catch (e) { extras = null; }
   }
   if (extras && typeof extras === "object") {
     extract(extras.subjects);
@@ -179,11 +252,7 @@ const getTeacherSubjects = (t: any): string[] => {
 
   let extrasData = t.extras_data;
   if (typeof extrasData === "string") {
-    try {
-      extrasData = JSON.parse(extrasData);
-    } catch (e) {
-      extrasData = null;
-    }
+    try { extrasData = JSON.parse(extrasData); } catch (e) { extrasData = null; }
   }
   if (extrasData && typeof extrasData === "object") {
     extract(extrasData.subjects);
@@ -194,11 +263,7 @@ const getTeacherSubjects = (t: any): string[] => {
     extract(t.user.subjects);
     let uExtras = t.user.extras;
     if (typeof uExtras === "string") {
-      try {
-        uExtras = JSON.parse(uExtras);
-      } catch (e) {
-        uExtras = null;
-      }
+      try { uExtras = JSON.parse(uExtras); } catch (e) { uExtras = null; }
     }
     if (uExtras && typeof uExtras === "object") {
       extract(uExtras.subjects);
@@ -234,7 +299,7 @@ export default function TimetableBuilderPage() {
   const [isLoadingTeachers, setIsLoadingTeachers] = useState(false);
   const [assigningId, setAssigningId] = useState<string | null>(null);
 
-  // Tab 3 states (GRID)
+  // Tab 3 states
   const [slotConfig, setSlotConfig] = useState<TimeSlotConfig>({
     working_days: DEFAULT_DAYS,
     period_slots: DEFAULT_SLOTS,
@@ -246,10 +311,20 @@ export default function TimetableBuilderPage() {
   const [loadingGrid, setLoadingGrid] = useState(false);
   const [savingGrid, setSavingGrid] = useState(false);
   const [teacherClashes, setTeacherClashes] = useState<Record<string, TeacherClash[]>>({});
-  
+
   const [isCloneModalOpen, setIsCloneModalOpen] = useState(false);
   const [targetClassId, setTargetClassId] = useState("");
   const [targetSectionId, setTargetSectionId] = useState("");
+
+  // Notification Toast state
+  const [toastNotice, setToastNotice] = useState<{ type: "success" | "error" | "warning"; text: string } | null>(null);
+
+  const showToast = (text: string, type: "success" | "error" | "warning" = "success") => {
+    setToastNotice({ type, text });
+    setTimeout(() => {
+      setToastNotice(null);
+    }, 3500);
+  };
 
   const getSelectedContextName = () => {
     const clsName = classes.find((c) => c.id === selectedClassId)?.name || "";
@@ -269,7 +344,6 @@ export default function TimetableBuilderPage() {
     return n || t.email || "Teacher";
   };
 
-  // 1. Fetch Classes on mount
   useEffect(() => {
     const fetchClasses = async () => {
       try {
@@ -278,13 +352,12 @@ export default function TimetableBuilderPage() {
         setClasses(data);
         if (data.length > 0) setSelectedClassId(data[0].id);
       } catch (error) {
-        toast.error("Failed to load classes");
+        showToast("Failed to load classes", "error");
       }
     };
     fetchClasses();
   }, []);
 
-  // 2. Fetch SECTIONS when Class changes
   useEffect(() => {
     if (!selectedClassId) {
       setSections([]);
@@ -293,11 +366,7 @@ export default function TimetableBuilderPage() {
     }
 
     const currentClass = classes.find((c) => c.id === selectedClassId);
-    if (
-      currentClass?.sections &&
-      Array.isArray(currentClass.sections) &&
-      currentClass.sections.length > 0
-    ) {
+    if (currentClass?.sections && Array.isArray(currentClass.sections) && currentClass.sections.length > 0) {
       setSections(currentClass.sections);
       setSelectedSectionId(currentClass.sections[0].id);
       return;
@@ -324,7 +393,6 @@ export default function TimetableBuilderPage() {
     fetchSections();
   }, [selectedClassId, classes]);
 
-  // 3. Fetch SUBJECTS per Class + Section
   useEffect(() => {
     if (!selectedClassId) return;
 
@@ -332,9 +400,7 @@ export default function TimetableBuilderPage() {
       setIsLoading(true);
       try {
         let url = `/class-subjects?class_id=${selectedClassId}`;
-        if (selectedSectionId) {
-          url += `&section_id=${selectedSectionId}`;
-        }
+        if (selectedSectionId) url += `&section_id=${selectedSectionId}`;
         const res = await api.get(url);
         setClassSubjects(res.data || []);
       } catch (error) {
@@ -346,7 +412,6 @@ export default function TimetableBuilderPage() {
     fetchSubjects();
   }, [selectedClassId, selectedSectionId]);
 
-  // 4. Fetch API Suggestions as user types
   useEffect(() => {
     if (subjectQuery.trim() === "") {
       setApiSuggestions([]);
@@ -364,7 +429,6 @@ export default function TimetableBuilderPage() {
     return () => clearTimeout(debounce);
   }, [subjectQuery]);
 
-  // 5. Load Teachers + Assignments + Workloads when Tab 2 opens
   useEffect(() => {
     if (activeTab !== "teachers" && activeTab !== "timetable") return;
     if (!selectedClassId) return;
@@ -379,8 +443,7 @@ export default function TimetableBuilderPage() {
         } catch {
           try {
             const r2 = await api.get("/staff");
-            const all = Array.isArray(r2.data) ? r2.data : r2.data?.items || [];
-            teacherList = all;
+            teacherList = Array.isArray(r2.data) ? r2.data : r2.data?.items || [];
           } catch {
             teacherList = [];
           }
@@ -431,15 +494,11 @@ export default function TimetableBuilderPage() {
     }
   }, [activeTab, selectedClassId, selectedSectionId]);
 
-  // 6. Load GRID DATA when Tab 3 opens
   const fetchGridAndConfig = async () => {
     if (!selectedClassId || !selectedSectionId) return;
     setLoadingGrid(true);
     try {
-      // Config
-      const resConfig = await api.get(
-        `/timetable-grid/config?class_id=${selectedClassId}&section_id=${selectedSectionId}`
-      );
+      const resConfig = await api.get(`/timetable-grid/config?class_id=${selectedClassId}&section_id=${selectedSectionId}`);
       if (resConfig.data && resConfig.data.period_slots && resConfig.data.period_slots.length > 0) {
         setSlotConfig({
           working_days: resConfig.data.working_days || DEFAULT_DAYS,
@@ -447,10 +506,7 @@ export default function TimetableBuilderPage() {
         });
       }
 
-      // Entries
-      const resEntries = await api.get(
-        `/timetable-grid/entries?class_id=${selectedClassId}&section_id=${selectedSectionId}`
-      );
+      const resEntries = await api.get(`/timetable-grid/entries?class_id=${selectedClassId}&section_id=${selectedSectionId}`);
       setGridData(resEntries.data || []);
 
       fetchTeacherClashes();
@@ -475,8 +531,6 @@ export default function TimetableBuilderPage() {
       console.error("Error checking clashes:", err);
     }
   };
-
-  // ----- TAB 1 & 2 ACTIONS -----
 
   const getDisplayedChips = () => {
     let chips: any[] = [];
@@ -505,7 +559,7 @@ export default function TimetableBuilderPage() {
 
   const handleAddSubject = async (name: string, color: string = "#3B82F6", isCustom: boolean = false) => {
     if (!selectedClassId) {
-      toast.error("Please select a class first");
+      showToast("Please select a class first", "error");
       return;
     }
 
@@ -522,10 +576,10 @@ export default function TimetableBuilderPage() {
 
       setClassSubjects((prev) => [...prev, res.data]);
       setSubjectQuery("");
-      toast.success(`${name} added!`);
+      showToast(`${name} added!`, "success");
     } catch (error: any) {
       const msg = error.response?.data?.detail || error.message || "Failed to add subject";
-      toast.error(msg);
+      showToast(msg, "error");
     } finally {
       setIsAddingId(null);
     }
@@ -544,9 +598,9 @@ export default function TimetableBuilderPage() {
       setClassSubjects((prev) =>
         prev.map((s) => (s.id === subjectId ? { ...s, periods_per_week: newPeriods } : s))
       );
-      toast.success(`Updated to ${newPeriods} periods/week`);
+      showToast(`Updated to ${newPeriods} periods/week`, "success");
     } catch (error: any) {
-      toast.error("Failed to update periods");
+      showToast("Failed to update periods", "error");
     } finally {
       setUpdatingId(null);
     }
@@ -557,10 +611,10 @@ export default function TimetableBuilderPage() {
     try {
       await api.delete(`/class-subjects/${subjectId}`);
       setClassSubjects((prev) => prev.filter((s) => s.id !== subjectId));
-      toast.success("Subject removed");
+      showToast("Subject removed", "success");
     } catch (error: any) {
       const detail = error.response?.data?.detail;
-      toast.error(typeof detail === "string" ? detail : "Failed to remove");
+      showToast(typeof detail === "string" ? detail : "Failed to remove", "error");
     }
   };
 
@@ -585,15 +639,13 @@ export default function TimetableBuilderPage() {
       } catch {}
 
       if (res.data?.is_overloaded) {
-        toast.warning(
-          `${res.data.teacher_name} is now at ${res.data.current_workload}/30 periods - overloaded, but saved.`
-        );
+        showToast(`${res.data.teacher_name} is overloaded (${res.data.current_workload}/30), but saved.`, "warning");
       } else {
-        toast.success(`Assigned to ${res.data.teacher_name}`);
+        showToast(`Assigned to ${res.data.teacher_name}`, "success");
       }
     } catch (e: any) {
       const detail = e.response?.data?.detail || e.response?.data?.message || e.message;
-      toast.error(typeof detail === "string" ? detail : "Failed to assign teacher");
+      showToast(typeof detail === "string" ? detail : "Failed to assign teacher", "error");
     } finally {
       setAssigningId(null);
     }
@@ -623,25 +675,23 @@ export default function TimetableBuilderPage() {
     return classSubjects.filter((s) => assignments[s.id]?.teacher_id).length;
   }, [classSubjects, assignments]);
 
-
-  // ----- TAB 3 ACTIONS (GRID) -----
   const handleCellUpdate = (periodNum: number, day: string, field: keyof GridCell, value: string) => {
     setGridData((prev) => {
       const existingIdx = prev.findIndex((c) => c.period_num === periodNum && c.day === day);
       if (existingIdx >= 0) {
         const updated = [...prev];
         const updatedCell = { ...updated[existingIdx], [field]: value };
-        if (field === 'teacher_id') {
+        if (field === "teacher_id") {
           const t = teachers.find((tch) => (tch.id || tch.user_id || tch.user?.id) === value);
-          updatedCell.teacher_name = t ? teacherName(t) : '';
+          updatedCell.teacher_name = t ? teacherName(t) : "";
         }
         updated[existingIdx] = updatedCell;
         return updated;
       } else {
         const newCell: GridCell = { period_num: periodNum, day, [field]: value };
-        if (field === 'teacher_id') {
+        if (field === "teacher_id") {
           const t = teachers.find((tch) => (tch.id || tch.user_id || tch.user?.id) === value);
-          newCell.teacher_name = t ? teacherName(t) : '';
+          newCell.teacher_name = t ? teacherName(t) : "";
         }
         return [...prev, newCell];
       }
@@ -699,10 +749,10 @@ export default function TimetableBuilderPage() {
         section_id: selectedSectionId,
         entries: gridData,
       });
-      toast.success('Timetable saved successfully!');
+      showToast("Timetable grid saved successfully!", "success");
       fetchTeacherClashes();
     } catch (err: any) {
-      toast.error(err.response?.data?.detail || "Failed to save timetable");
+      showToast(err.response?.data?.detail || "Failed to save timetable", "error");
     } finally {
       setSavingGrid(false);
     }
@@ -719,10 +769,10 @@ export default function TimetableBuilderPage() {
         period_slots: slotConfig.period_slots,
       });
       setIsConfigModalOpen(false);
-      toast.success('Time slots saved!');
+      showToast("Time slots saved!", "success");
       fetchGridAndConfig();
     } catch (err: any) {
-      toast.error('Failed to save config');
+      showToast("Failed to save config", "error");
     } finally {
       setIsSavingConfig(false);
     }
@@ -730,20 +780,32 @@ export default function TimetableBuilderPage() {
 
   const handleCloneGrid = async () => {
     if (!selectedClassId || !selectedSectionId || !targetClassId || !targetSectionId) {
-      toast.error("Please select target class and section");
+      showToast("Please select target class and section", "error");
       return;
     }
     try {
       await api.post(`/timetable-grid/clone?source_class_id=${selectedClassId}&source_section_id=${selectedSectionId}&target_class_id=${targetClassId}&target_section_id=${targetSectionId}`);
       setIsCloneModalOpen(false);
-      toast.success('Grid cloned successfully!');
+      showToast("Grid cloned successfully!", "success");
     } catch (err) {
-      toast.error('Failed to clone grid');
+      showToast("Failed to clone grid", "error");
     }
   };
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6 text-slate-200">
+      {/* Toast Banner */}
+      {toastNotice && (
+        <div className={`fixed bottom-5 right-5 z-50 p-4 rounded-xl shadow-lg border flex items-center gap-3 text-sm font-semibold transition-all ${
+          toastNotice.type === "success" ? "bg-emerald-950 text-emerald-200 border-emerald-800" :
+          toastNotice.type === "warning" ? "bg-amber-950 text-amber-200 border-amber-800" :
+          "bg-red-950 text-red-200 border-red-800"
+        }`}>
+          {toastNotice.type === "success" ? <Check className="w-5 h-5 text-emerald-400" /> : <AlertTriangle className="w-5 h-5 text-amber-400" />}
+          <span>{toastNotice.text}</span>
+        </div>
+      )}
+
       {/* HEADER */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -1371,7 +1433,7 @@ export default function TimetableBuilderPage() {
         </div>
       )}
 
-      {/* TIME CONFIG MODAL (Dark Theme) */}
+      {/* TIME CONFIG MODAL */}
       {isConfigModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#111827] rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden border border-slate-800">
@@ -1497,7 +1559,7 @@ export default function TimetableBuilderPage() {
         </div>
       )}
 
-      {/* CLONE GRID MODAL (Dark Theme) */}
+      {/* CLONE GRID MODAL */}
       {isCloneModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#111827] rounded-2xl shadow-xl max-w-md w-full p-6 border border-slate-800 space-y-4">
