@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { useParams } from "next/navigation";
+import { api } from "@/lib/api";
 import {
   BookOpen,
   Users,
@@ -17,9 +18,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
-// --- ZERO-DEPENDENCY API & TOAST ENGINE ---
-const API_BASE_URL = "https://weaischool-backend.onrender.com/api/v1";
-
+// Helper: Extract school slug from URL path (e.g. /school/ppps/timetable -> ppps)
 const getSlugFromUrl = (): string => {
   if (typeof window === "undefined") return "ppps";
   const pathParts = window.location.pathname.split("/");
@@ -30,6 +29,7 @@ const getSlugFromUrl = (): string => {
   return "ppps";
 };
 
+// Helper: Deep JWT token extraction from localStorage and cookies
 const getAuthToken = (): string => {
   if (typeof window === "undefined") return "";
 
@@ -43,7 +43,6 @@ const getAuthToken = (): string => {
     "accessToken",
     "authToken",
     "admin_token",
-    "user_token",
   ];
 
   for (const k of directKeys) {
@@ -54,7 +53,6 @@ const getAuthToken = (): string => {
     }
   }
 
-  // Deep scan localStorage for Zustand or nested JSON tokens
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
@@ -75,13 +73,11 @@ const getAuthToken = (): string => {
             parsed.state?.access_token ||
             parsed.state?.accessToken ||
             parsed.state?.jwt ||
-            parsed.state?.user?.token ||
             parsed.token ||
             parsed.access_token ||
             parsed.accessToken ||
             parsed.jwt ||
-            parsed.user?.token ||
-            parsed.session?.access_token;
+            parsed.user?.token;
           if (typeof t === "string" && t.trim()) return t.trim();
         }
       } catch (e) {}
@@ -91,91 +87,82 @@ const getAuthToken = (): string => {
   return "";
 };
 
-const requestWithRetry = async (endpoint: string, options: RequestInit = {}, retries = 5, delayMs = 2000) => {
+// Helper: Safely extract array list from dynamic API responses
+const extractArray = (resData: any): any[] => {
+  if (!resData) return [];
+  if (Array.isArray(resData)) return resData;
+  if (typeof resData === "object") {
+    if (Array.isArray(resData.data)) return resData.data;
+    if (Array.isArray(resData.items)) return resData.items;
+    if (Array.isArray(resData.classes)) return resData.classes;
+    if (Array.isArray(resData.subjects)) return resData.subjects;
+    if (Array.isArray(resData.staff)) return resData.staff;
+    if (Array.isArray(resData.results)) return resData.results;
+  }
+  return [];
+};
+
+// Direct fetch engine with retries for Render cold starts
+const directFetchWithRetry = async (endpoint: string, retries = 5, delayMs = 2000): Promise<any> => {
+  const API_BASE_URL = "https://weaischool-backend.onrender.com/api/v1";
   const token = getAuthToken();
   const slug = getSlugFromUrl();
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...((options.headers as Record<string, string>) || {}),
   };
+  if (token) headers["Authorization"] = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+  if (slug) headers["X-School-Slug"] = slug;
 
-  if (token) {
-    headers["Authorization"] = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
-  }
-  if (slug) {
-    headers["X-School-Slug"] = slug;
-  }
-
-  const cleanEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
-  const url = `${API_BASE_URL}${cleanEndpoint}`;
+  const cleanEp = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  const url = `${API_BASE_URL}${cleanEp}`;
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const res = await fetch(url, { ...options, headers });
+      const res = await fetch(url, { method: "GET", headers });
       if (res.ok) {
-        if (res.status === 204) return { data: [] };
-        const data = await res.json();
-        return { data };
+        if (res.status === 204) return [];
+        return await res.json();
       }
-
-      if (res.status === 404 || res.status === 401) {
-        // Return soft null to try next fallback endpoint
-        if (attempt < retries) {
-          await new Promise((r) => setTimeout(r, 1000));
-          continue;
-        }
-      }
-
-      if (attempt === retries) {
-        const errData = await res.json().catch(() => ({}));
-        const err: any = new Error(`Request failed with status ${res.status}`);
-        err.response = { status: res.status, data: errData };
-        throw err;
-      }
+      if (attempt === retries) return null;
     } catch (err) {
-      if (attempt === retries) throw err;
-      await new Promise((r) => setTimeout(r, delayMs * attempt));
+      if (attempt === retries) return null;
     }
+    await new Promise((r) => setTimeout(r, delayMs * attempt));
   }
-  return { data: [] };
+  return null;
 };
 
-// Robust multi-endpoint fetcher
-const fetchMultiEndpoints = async (endpoints: string[]) => {
+// Universal endpoint fetcher that handles both @/lib/api and direct fetch fallbacks
+const fetchWithFallbacks = async (endpoints: string[]): Promise<any[]> => {
+  // 1. Try @/lib/api first
   for (const ep of endpoints) {
     try {
-      const res = await requestWithRetry(ep, { method: "GET" }, 2, 1200);
-      let data = res?.data;
-      if (data) {
-        let list: any[] = [];
-        if (Array.isArray(data)) list = data;
-        else if (Array.isArray(data.data)) list = data.data;
-        else if (Array.isArray(data.items)) list = data.items;
-        else if (Array.isArray(data.classes)) list = data.classes;
-        else if (Array.isArray(data.subjects)) list = data.subjects;
-        else if (Array.isArray(data.staff)) list = data.staff;
-
-        if (list.length > 0) return list;
-      }
+      const res = await api.get(ep);
+      const raw = res?.data !== undefined ? res.data : res;
+      const list = extractArray(raw);
+      if (list.length > 0) return list;
     } catch (e) {
-      // Try next endpoint pattern
+      // try next
     }
   }
+
+  // 2. Fallback to direct fetch engine with Render wake-up handling
+  for (const ep of endpoints) {
+    try {
+      const raw = await directFetchWithRetry(ep);
+      const list = extractArray(raw);
+      if (list.length > 0) return list;
+    } catch (e) {
+      // try next
+    }
+  }
+
   return [];
 };
 
-const api = {
-  get: (url: string) => requestWithRetry(url, { method: "GET" }),
-  post: (url: string, body?: any) =>
-    requestWithRetry(url, { method: "POST", body: JSON.stringify(body) }),
-  patch: (url: string, body?: any) =>
-    requestWithRetry(url, { method: "PATCH", body: JSON.stringify(body) }),
-  delete: (url: string) => requestWithRetry(url, { method: "DELETE" }),
-};
-
+// Zero-dependency Toast Controller
 let toastListener: ((msg: string, type: "success" | "error" | "warning" | "info") => void) | null = null;
-
 const toast = {
   success: (msg: string) => toastListener && toastListener(msg, "success"),
   error: (msg: string) => toastListener && toastListener(msg, "error"),
@@ -183,7 +170,6 @@ const toast = {
   info: (msg: string) => toastListener && toastListener(msg, "info"),
 };
 
-// --- DATA & CONSTANTS ---
 const QUICK_SUBJECTS = [
   { name: "Mathematics", color: "#3B82F6" },
   { name: "English", color: "#10B981" },
@@ -325,6 +311,7 @@ export default function TimetableBuilderPage() {
 
   const [activeTab, setActiveTab] = useState<"subjects" | "teachers" | "timetable">("subjects");
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingClasses, setIsLoadingClasses] = useState(true);
   const [isAddingId, setIsAddingId] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
 
@@ -350,7 +337,7 @@ export default function TimetableBuilderPage() {
   const [gridData, setGridData] = useState<Record<string, any>>({});
   const [isSavingGrid, setIsSavingGrid] = useState(false);
 
-  // Toast Banner State
+  // Toast State
   const [toastBanner, setToastBanner] = useState<{
     msg: string;
     type: "success" | "error" | "warning" | "info";
@@ -379,8 +366,8 @@ export default function TimetableBuilderPage() {
   ];
 
   const getSelectedContextName = () => {
-    const clsName = classes.find((c) => c.id === selectedClassId)?.name || "";
-    const secName = sections.find((s) => s.id === selectedSectionId)?.name || "";
+    const clsName = classes.find((c) => (c.id || c.class_id) === selectedClassId)?.name || "";
+    const secName = sections.find((s) => (s.id || s.section_id) === selectedSectionId)?.name || "";
     if (clsName && secName) return `Class ${clsName} (Section ${secName})`;
     if (clsName) return `Class ${clsName}`;
     return "...";
@@ -396,29 +383,47 @@ export default function TimetableBuilderPage() {
     return n || t.email || "Teacher";
   };
 
-  // 1. Fetch Classes with Fail-Safe Multi-Endpoint Fallbacks
+  // 1. Fetch Classes with Cold Start Handling and Endpoint Fallbacks
   useEffect(() => {
-    const fetchClasses = async () => {
+    const loadClasses = async () => {
+      setIsLoadingClasses(true);
       const slug = getSlugFromUrl();
-      try {
-        const dataList = await fetchMultiEndpoints([
-          `/academics/classes?limit=100&slug=${slug}`,
-          `/classes?slug=${slug}`,
-          `/academics/classes`,
-          `/classes`,
-        ]);
 
-        if (dataList && dataList.length > 0) {
-          setClasses(dataList);
-          setSelectedClassId(dataList[0].id || dataList[0].class_id);
-        } else {
-          setClasses([]);
+      const rawList = await fetchWithFallbacks([
+        `/classes?limit=100&slug=${slug}`,
+        `/academics/classes?limit=100&slug=${slug}`,
+        `/classes`,
+        `/academics/classes`,
+      ]);
+
+      if (rawList.length > 0) {
+        const formatted = rawList.map((item: any, idx: number) => {
+          const cId = String(item.id || item.class_id || item._id || `cls-${idx}`);
+          const cName = String(item.name || item.class_name || item.grade || item.standard || `Class ${idx + 1}`);
+
+          let secs: any[] = [];
+          if (Array.isArray(item.sections) && item.sections.length > 0) {
+            secs = item.sections.map((sec: any, sIdx: number) => ({
+              id: String(sec.id || sec.section_id || `sec-${sIdx}`),
+              name: String(sec.name || sec.section_name || String.fromCharCode(65 + sIdx)),
+            }));
+          }
+
+          return { id: cId, name: cName, sections: secs };
+        });
+
+        setClasses(formatted);
+        if (formatted.length > 0) {
+          setSelectedClassId(formatted[0].id);
         }
-      } catch (error) {
-        console.warn("Class loading error handled gracefully:", error);
+      } else {
+        setClasses([]);
       }
+
+      setIsLoadingClasses(false);
     };
-    fetchClasses();
+
+    loadClasses();
   }, []);
 
   // 2. Fetch SECTIONS when Class changes
@@ -443,26 +448,28 @@ export default function TimetableBuilderPage() {
     const fetchSections = async () => {
       setIsLoadingSections(true);
       const slug = getSlugFromUrl();
-      try {
-        const secList = await fetchMultiEndpoints([
-          `/classes/${selectedClassId}/sections?slug=${slug}`,
-          `/academics/classes/${selectedClassId}/sections`,
-          `/classes/${selectedClassId}/sections`,
-        ]);
 
-        setSections(secList);
-        if (secList.length > 0) {
-          setSelectedSectionId(secList[0].id || secList[0].section_id);
-        } else {
-          setSelectedSectionId("");
-        }
-      } catch (error) {
-        setSections([]);
+      const rawSecs = await fetchWithFallbacks([
+        `/classes/${selectedClassId}/sections?slug=${slug}`,
+        `/academics/classes/${selectedClassId}/sections?slug=${slug}`,
+        `/classes/${selectedClassId}/sections`,
+      ]);
+
+      const formattedSecs = rawSecs.map((s: any, idx: number) => ({
+        id: String(s.id || s.section_id || `sec-${idx}`),
+        name: String(s.name || s.section_name || String.fromCharCode(65 + idx)),
+      }));
+
+      setSections(formattedSecs);
+      if (formattedSecs.length > 0) {
+        setSelectedSectionId(formattedSecs[0].id);
+      } else {
         setSelectedSectionId("");
-      } finally {
-        setIsLoadingSections(false);
       }
+
+      setIsLoadingSections(false);
     };
+
     fetchSections();
   }, [selectedClassId, classes]);
 
@@ -473,21 +480,17 @@ export default function TimetableBuilderPage() {
     const fetchSubjects = async () => {
       setIsLoading(true);
       const slug = getSlugFromUrl();
-      try {
-        let url = `/class-subjects?class_id=${selectedClassId}&slug=${slug}`;
-        if (selectedSectionId) {
-          url += `&section_id=${selectedSectionId}`;
-        }
-        const res = await api.get(url);
-        let data = res.data || [];
-        if (!Array.isArray(data) && Array.isArray(data.data)) data = data.data;
-        setClassSubjects(data);
-      } catch (error) {
-        console.error("Failed to fetch subjects:", error);
-      } finally {
-        setIsLoading(false);
+
+      let url = `/class-subjects?class_id=${selectedClassId}&slug=${slug}`;
+      if (selectedSectionId) {
+        url += `&section_id=${selectedSectionId}`;
       }
+
+      const list = await fetchWithFallbacks([url, `/class-subjects?class_id=${selectedClassId}`]);
+      setClassSubjects(list);
+      setIsLoading(false);
     };
+
     fetchSubjects();
   }, [selectedClassId, selectedSectionId]);
 
@@ -500,7 +503,8 @@ export default function TimetableBuilderPage() {
     const fetchSuggestions = async () => {
       try {
         const res = await api.get(`/class-subjects/suggestions?query=${subjectQuery}`);
-        setApiSuggestions(res.data?.suggestions || []);
+        const data = res?.data !== undefined ? res.data : res;
+        setApiSuggestions(data?.suggestions || []);
       } catch (error) {
         setApiSuggestions([]);
       }
@@ -516,58 +520,60 @@ export default function TimetableBuilderPage() {
     const loadTab2 = async () => {
       setIsLoadingTeachers(true);
       const slug = getSlugFromUrl();
+
+      const teacherList = await fetchWithFallbacks([
+        `/staff?role=TEACHER&slug=${slug}`,
+        `/staff?limit=100&slug=${slug}`,
+        `/staff?role=teacher`,
+        `/staff`,
+      ]);
+
+      const enrichedTeachers = await Promise.all(
+        teacherList.map(async (t) => {
+          const staffId = t.id || t.user_id || t.user?.id;
+          if (!staffId) return t;
+          try {
+            const detailRes = await api.get(`/staff/${staffId}`);
+            const data = detailRes?.data !== undefined ? detailRes.data : detailRes;
+            return { ...t, ...data, extras: data?.extras || t.extras };
+          } catch {
+            return t;
+          }
+        })
+      );
+
+      setTeachers(enrichedTeachers);
+
       try {
-        let teacherList = await fetchMultiEndpoints([
-          `/staff?role=TEACHER&slug=${slug}`,
-          `/staff?limit=100`,
-          `/teachers`,
-        ]);
-
-        const enrichedTeachers = await Promise.all(
-          teacherList.map(async (t) => {
-            const staffId = t.id || t.user_id || t.user?.id;
-            if (!staffId) return t;
-            try {
-              const detailRes = await api.get(`/staff/${staffId}`);
-              return { ...t, ...detailRes.data, extras: detailRes.data?.extras || t.extras };
-            } catch {
-              return t;
-            }
-          })
-        );
-
-        setTeachers(enrichedTeachers);
-
-        try {
-          let aUrl = `/teacher-assignments?class_id=${selectedClassId}&slug=${slug}`;
-          if (selectedSectionId) aUrl += `&section_id=${selectedSectionId}`;
-          const aRes = await api.get(aUrl);
-          const list = Array.isArray(aRes.data) ? aRes.data : aRes.data?.data || [];
-          const map: Record<string, any> = {};
-          list.forEach((a: any) => {
-            map[a.class_subject_id] = a;
-          });
-          setAssignments(map);
-        } catch {
-          setAssignments({});
-        }
-
-        try {
-          const wRes = await api.get(`/teacher-assignments/workload/all?slug=${slug}`);
-          const wData = Array.isArray(wRes.data) ? wRes.data : wRes.data?.data || [];
-          setWorkloads(wData);
-        } catch {
-          setWorkloads([]);
-        }
-      } finally {
-        setIsLoadingTeachers(false);
+        let aUrl = `/teacher-assignments?class_id=${selectedClassId}&slug=${slug}`;
+        if (selectedSectionId) aUrl += `&section_id=${selectedSectionId}`;
+        const aRes = await api.get(aUrl);
+        const aData = aRes?.data !== undefined ? aRes.data : aRes;
+        const list = extractArray(aData);
+        const map: Record<string, any> = {};
+        list.forEach((a: any) => {
+          map[a.class_subject_id] = a;
+        });
+        setAssignments(map);
+      } catch {
+        setAssignments({});
       }
+
+      try {
+        const wRes = await api.get(`/teacher-assignments/workload/all?slug=${slug}`);
+        const wData = wRes?.data !== undefined ? wRes.data : wRes;
+        setWorkloads(extractArray(wData));
+      } catch {
+        setWorkloads([]);
+      }
+
+      setIsLoadingTeachers(false);
     };
 
     loadTab2();
   }, [activeTab, selectedClassId, selectedSectionId]);
 
-  // Load Saved Grid
+  // Load Saved Grid State
   useEffect(() => {
     if (activeTab === "timetable" && selectedClassId && selectedSectionId) {
       const cacheKey = `grid_${selectedClassId}_${selectedSectionId}`;
@@ -627,8 +633,9 @@ export default function TimetableBuilderPage() {
         color_code: color,
         is_custom: isCustom,
       });
+      const data = res?.data !== undefined ? res.data : res;
 
-      setClassSubjects((prev) => [...prev, res.data]);
+      setClassSubjects((prev) => [...prev, data]);
       setSubjectQuery("");
       toast.success(`${name} added!`);
     } catch (error: any) {
@@ -685,25 +692,26 @@ export default function TimetableBuilderPage() {
         section_id: selectedSectionId || null,
         teacher_id: teacherId,
       });
+      const data = res?.data !== undefined ? res.data : res;
 
       setAssignments((prev) => ({
         ...prev,
-        [classSubjectId]: res.data,
+        [classSubjectId]: data,
       }));
 
       try {
         const slug = getSlugFromUrl();
         const wRes = await api.get(`/teacher-assignments/workload/all?slug=${slug}`);
-        const wData = Array.isArray(wRes.data) ? wRes.data : wRes.data?.data || [];
-        setWorkloads(wData);
+        const wData = wRes?.data !== undefined ? wRes.data : wRes;
+        setWorkloads(extractArray(wData));
       } catch {}
 
-      if (res.data?.is_overloaded) {
+      if (data?.is_overloaded) {
         toast.warning(
-          `${res.data.teacher_name} is now at ${res.data.current_workload}/30 periods - overloaded.`
+          `${data.teacher_name} is now at ${data.current_workload}/30 periods - overloaded.`
         );
       } else {
-        toast.success(`Assigned to ${res.data.teacher_name || "Teacher"}`);
+        toast.success(`Assigned to ${data.teacher_name || "Teacher"}`);
       }
     } catch (e: any) {
       const detail = e.response?.data?.detail || e.response?.data?.message || e.message;
@@ -863,25 +871,26 @@ export default function TimetableBuilderPage() {
       {/* GLOBAL SELECTORS */}
       <div className="bg-[#111827] p-5 rounded-2xl border border-slate-800 flex flex-wrap items-center gap-6 shadow-sm">
         <div className="flex-1 min-w-[200px] max-w-xs">
-          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
+          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
             Select Class
+            {isLoadingClasses && <Loader2 className="w-3 h-3 animate-spin text-blue-400" />}
           </label>
           <select
             value={selectedClassId}
             onChange={(e) => setSelectedClassId(e.target.value)}
-            className="w-full bg-[#0f172a] border border-slate-700 text-white rounded-lg px-3 py-2.5 outline-none focus:border-blue-500"
+            disabled={isLoadingClasses}
+            className="w-full bg-[#0f172a] border border-slate-700 text-white rounded-lg px-3 py-2.5 outline-none focus:border-blue-500 disabled:opacity-60"
           >
-            {classes.length === 0 ? (
+            {isLoadingClasses ? (
+              <option value="">Loading classes from server...</option>
+            ) : classes.length === 0 ? (
               <option value="">No classes found in database</option>
             ) : (
-              classes.map((cls) => {
-                const cId = cls.id || cls.class_id;
-                return (
-                  <option key={cId} value={cId}>
-                    {cls.name || cls.class_name || `Class ${cId}`}
-                  </option>
-                );
-              })
+              classes.map((cls) => (
+                <option key={cls.id} value={cls.id}>
+                  {cls.name}
+                </option>
+              ))
             )}
           </select>
         </div>
@@ -894,20 +903,17 @@ export default function TimetableBuilderPage() {
           <select
             value={selectedSectionId}
             onChange={(e) => setSelectedSectionId(e.target.value)}
-            disabled={sections.length === 0}
+            disabled={sections.length === 0 || isLoadingSections}
             className="w-full bg-[#0f172a] border border-slate-700 text-white rounded-lg px-3 py-2.5 outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {sections.length === 0 ? (
               <option value="">No sections found</option>
             ) : (
-              sections.map((sec) => {
-                const sId = sec.id || sec.section_id;
-                return (
-                  <option key={sId} value={sId}>
-                    {sec.name || sec.section_name || `Section ${sId}`}
-                  </option>
-                );
-              })
+              sections.map((sec) => (
+                <option key={sec.id} value={sec.id}>
+                  {sec.name}
+                </option>
+              ))
             )}
           </select>
         </div>
