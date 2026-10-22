@@ -1,1093 +1,1205 @@
 ﻿"use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
-  BookOpen,
-  Users,
   Calendar,
+  Clock,
+  Users,
+  BookOpen,
   Plus,
   Trash2,
-  Save,
+  Loader2,
   RefreshCw,
-  Search,
-  Check,
-  Clock,
+  Save,
+  X,
   AlertCircle,
-  CheckCircle2,
-  Sparkles,
-  ChevronDown,
-  UserCheck
+  GripVertical,
+  Briefcase,
+  Check,
 } from "lucide-react";
+import {
+  classApi,
+  academicYearApi,
+  sectionApi,
+} from "@/lib/api";
+import api from "@/lib/api";
 
-// --- Types & Interfaces ---
-interface Section {
-  id: string;
-  name: string;
-}
+// ═══════════════════════════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════════════════════════
 
 interface ClassItem {
   id: string;
   name: string;
-  sections: Section[];
+  numeric_level?: number;
+  class_level?: number;
+  academic_year_id: string;
+  total_sections?: number;
 }
 
-interface Subject {
+interface AcademicYear {
   id: string;
   name: string;
-  code: string;
+  is_current?: boolean;
+  is_active?: boolean;
+}
+
+interface SectionItem {
+  id: string;
+  name: string;
+  max_students: number;
+  current_strength: number;
+}
+
+interface StaffMember {
+  id: string;
+  first_name?: string;
+  last_name?: string;
+  designation?: string;
+  employee_id?: string;
+  email?: string;
+  phone?: string;
+  extras?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+interface SubjectConfig {
+  name: string;
   periodsPerWeek: number;
-  color?: string;
+  color: string;
+  colorIndex: number;
+  teacherId: string;
+  teacherName: string;
 }
 
-interface Teacher {
-  id: string;
-  name: string;
-  designation: string;
-  department?: string;
-  assignedSubjects: string[];
-  maxPeriodsPerWeek: number;
-  assignedPeriodsCount: number;
+interface GridCell {
+  subject: string;
+  teacherId: string;
+  teacherName: string;
+  color: string;
 }
 
-interface CellData {
-  subjectId: string;
-  subjectName: string;
-  teacherId?: string;
-  teacherName?: string;
+interface TimetableEntry {
+  day_of_week: number;
+  period_number: number;
+  subject_name: string;
+  teacher_id?: string;
+  teacher_name?: string;
 }
 
-interface ToastNotification {
-  id: string;
-  type: "success" | "error" | "info";
-  message: string;
-}
-
-const PRESET_SUBJECTS = [
-  "Mathematics",
-  "English",
-  "Science",
-  "Social Science",
-  "Hindi",
-  "Computer",
-  "Physics",
-  "Chemistry",
-  "Biology",
-  "Sanskrit",
-  "EVS"
-];
+// ═══════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const PERIODS = [
-  { id: 1, name: "Period 1", time: "08:00 - 08:45" },
-  { id: 2, name: "Period 2", time: "08:45 - 09:30" },
-  { id: 3, name: "Period 3", time: "09:30 - 10:15" },
-  { id: 4, name: "Period 4", time: "10:15 - 11:00" },
-  { id: 5, name: "Period 5", time: "11:30 - 12:15" },
-  { id: 6, name: "Period 6", time: "12:15 - 01:00" },
-  { id: 7, name: "Period 7", time: "01:00 - 01:45" },
-  { id: 8, name: "Period 8", time: "01:45 - 02:30" }
+const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const PERIODS = [1, 2, 3, 4, 5, 6, 7, 8];
+const TOTAL_SLOTS = DAYS.length * PERIODS.length;
+
+const SUBJECT_COLORS = [
+  { bg: "bg-blue-500", text: "text-blue-400", light: "bg-blue-500/15", border: "border-blue-500/30" },
+  { bg: "bg-purple-500", text: "text-purple-400", light: "bg-purple-500/15", border: "border-purple-500/30" },
+  { bg: "bg-green-500", text: "text-green-400", light: "bg-green-500/15", border: "border-green-500/30" },
+  { bg: "bg-yellow-500", text: "text-yellow-400", light: "bg-yellow-500/15", border: "border-yellow-500/30" },
+  { bg: "bg-red-500", text: "text-red-400", light: "bg-red-500/15", border: "border-red-500/30" },
+  { bg: "bg-pink-500", text: "text-pink-400", light: "bg-pink-500/15", border: "border-pink-500/30" },
+  { bg: "bg-indigo-500", text: "text-indigo-400", light: "bg-indigo-500/15", border: "border-indigo-500/30" },
+  { bg: "bg-teal-500", text: "text-teal-400", light: "bg-teal-500/15", border: "border-teal-500/30" },
+  { bg: "bg-orange-500", text: "text-orange-400", light: "bg-orange-500/15", border: "border-orange-500/30" },
+  { bg: "bg-cyan-500", text: "text-cyan-400", light: "bg-cyan-500/15", border: "border-cyan-500/30" },
+  { bg: "bg-emerald-500", text: "text-emerald-400", light: "bg-emerald-500/15", border: "border-emerald-500/30" },
+  { bg: "bg-rose-500", text: "text-rose-400", light: "bg-rose-500/15", border: "border-rose-500/30" },
 ];
 
-// --- Helper Utilities ---
-function getAuthToken(): string {
-  if (typeof window === "undefined") return "";
-  const directKeys = ["token", "access_token", "auth_token", "jwt", "bearer"];
-  for (const k of directKeys) {
-    const val = localStorage.getItem(k);
-    if (val && val.length > 10) return val.replace(/^"|"$/g, "").trim();
+// ═══════════════════════════════════════════════════════════
+// HELPERS (copied from working pages)
+// ═══════════════════════════════════════════════════════════
+
+function asItems<T>(data: unknown): T[] {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object" && "items" in data) {
+    const items = (data as { items?: T[] }).items;
+    if (Array.isArray(items)) return items;
   }
-  const jsonKeys = ["user", "auth-storage", "auth_store", "weai_auth"];
-  for (const k of jsonKeys) {
-    try {
-      const raw = localStorage.getItem(k);
-      if (!raw) continue;
-      const parsed = JSON.parse(raw);
-      const token =
-        parsed?.token ||
-        parsed?.access_token ||
-        parsed?.state?.token ||
-        parsed?.state?.accessToken ||
-        parsed?.state?.user?.token;
-      if (token && typeof token === "string" && token.length > 10) return token;
-    } catch {}
+  return [];
+}
+
+function extractArray(data: unknown): Array<Record<string, unknown>> {
+  if (!data) return [];
+  if (Array.isArray(data)) return data as Array<Record<string, unknown>>;
+  const r = data as Record<string, unknown>;
+  for (const key of ["items", "staff", "users", "results", "data", "entries", "timetable"]) {
+    const val = r[key];
+    if (Array.isArray(val)) return val as Array<Record<string, unknown>>;
   }
+  return [];
+}
+
+function getStaffName(s: StaffMember): string {
+  const first = s.first_name || "";
+  const last = s.last_name && s.last_name !== "." ? s.last_name : "";
+  return `${first} ${last}`.trim() || "Unknown";
+}
+
+function getStaffSubjects(s: StaffMember): string {
+  const extras = (s.extras as Record<string, unknown>) || {};
+  const sub = extras.subjects;
+  if (Array.isArray(sub)) return sub.join(", ");
+  if (typeof sub === "string") return sub;
   return "";
 }
 
-function getSlugFromUrl(): string {
-  if (typeof window === "undefined") return "ppps";
-  const parts = window.location.pathname.split("/").filter(Boolean);
-  const idx = parts.indexOf("school");
-  if (idx !== -1 && parts[idx + 1]) return parts[idx + 1];
-  return "ppps";
+function emptyGrid(): (GridCell | null)[][] {
+  return Array.from({ length: DAYS.length }, () =>
+    Array.from({ length: PERIODS.length }, () => null)
+  );
 }
 
-// Strictly Map Real Database Classes and Real Sections (No Fake Generation)
-function normalizeClassesFromDb(rawList: any[]): ClassItem[] {
-  if (!Array.isArray(rawList)) return [];
-
-  return rawList.map((item, idx) => {
-    const classId = String(item.id || item._id || item.class_id || `cls_${idx + 1}`);
-    const className =
-      item.name ||
-      item.class_name ||
-      item.grade ||
-      item.standard ||
-      item.title ||
-      `Class ${idx + 1}`;
-
-    // Read real sections array from backend/database
-    let rawSecs =
-      item.sections ||
-      item.class_sections ||
-      item.sections_list ||
-      item.Section ||
-      item.section_set ||
-      [];
-
-    let parsedSecs: Section[] = [];
-    if (Array.isArray(rawSecs) && rawSecs.length > 0) {
-      parsedSecs = rawSecs.map((s: any, sIdx: number) => {
-        if (typeof s === "string") {
-          return {
-            id: `sec_${s.toLowerCase().replace(/\s+/g, "_")}`,
-            name: s.startsWith("Section") ? s : `Section ${s}`
-          };
-        }
-        return {
-          id: String(s.id || s._id || s.section_id || `sec_${sIdx + 1}`),
-          name: s.name || s.section_name || s.title || `Section ${s.section_number || String.fromCharCode(65 + sIdx)}`
-        };
-      });
-    }
-
-    return {
-      id: classId,
-      name: className,
-      sections: parsedSecs // Strictly match exact DB sections
-    };
-  });
-}
-
-function scanLocalStorageForClasses(): ClassItem[] {
-  if (typeof window === "undefined") return [];
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key) continue;
-      const lowerKey = key.toLowerCase();
-      if (lowerKey.includes("class") || lowerKey.includes("academic") || lowerKey.includes("school")) {
-        const val = localStorage.getItem(key);
-        if (!val) continue;
-        const parsed = JSON.parse(val);
-        const candidateList =
-          parsed?.items ||
-          parsed?.data ||
-          parsed?.classes ||
-          parsed?.state?.classes ||
-          (Array.isArray(parsed) ? parsed : null);
-
-        if (Array.isArray(candidateList) && candidateList.length > 0) {
-          const normalized = normalizeClassesFromDb(candidateList);
-          if (normalized.length > 0) return normalized;
-        }
-      }
-    }
-  } catch {}
-  return [];
-}
-
-// Staff Data Normalizer
-function normalizeTeachers(rawStaff: any[]): Teacher[] {
-  if (!Array.isArray(rawStaff)) return [];
-
-  return rawStaff.map((item, idx) => {
-    const id = String(item.id || item._id || item.staff_id || `teacher_${idx + 1}`);
-
-    const name =
-      item.full_name ||
-      item.name ||
-      `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
-      `Teacher ${idx + 1}`;
-
-    const designation =
-      item.designation ||
-      item.role ||
-      item.job_title ||
-      "Faculty Member";
-
-    const department =
-      item.department ||
-      item.dept ||
-      item.specialization ||
-      "Academics";
-
-    let assignedSubjects: string[] = [];
-    if (Array.isArray(item.subjects) && item.subjects.length > 0) {
-      assignedSubjects = item.subjects.map((s: any) => typeof s === "string" ? s : s.name || String(s));
-    } else if (Array.isArray(item.assigned_subjects) && item.assigned_subjects.length > 0) {
-      assignedSubjects = item.assigned_subjects.map((s: any) => typeof s === "string" ? s : s.name || String(s));
-    } else if (typeof item.subject === "string" && item.subject.trim().length > 0) {
-      assignedSubjects = [item.subject.trim()];
-    } else if (typeof item.specialization === "string" && item.specialization.trim().length > 0) {
-      assignedSubjects = [item.specialization.trim()];
-    } else {
-      assignedSubjects = ["General"];
-    }
-
-    const maxPeriodsPerWeek = Number(item.max_periods_per_week || item.max_periods || 28);
-    const assignedPeriodsCount = Number(item.assigned_periods_count || item.assigned_periods || 0);
-
-    return {
-      id,
-      name,
-      designation,
-      department,
-      assignedSubjects,
-      maxPeriodsPerWeek,
-      assignedPeriodsCount
-    };
-  });
-}
-
-function scanLocalStorageForStaff(): Teacher[] {
-  if (typeof window === "undefined") return [];
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key) continue;
-      const lowerKey = key.toLowerCase();
-      if (lowerKey.includes("staff") || lowerKey.includes("teacher") || lowerKey.includes("faculty")) {
-        const val = localStorage.getItem(key);
-        if (!val) continue;
-        const parsed = JSON.parse(val);
-        const candidateList =
-          parsed?.items ||
-          parsed?.data ||
-          parsed?.staff ||
-          parsed?.teachers ||
-          parsed?.state?.staff ||
-          (Array.isArray(parsed) ? parsed : null);
-
-        if (Array.isArray(candidateList) && candidateList.length > 0) {
-          const normalized = normalizeTeachers(candidateList);
-          if (normalized.length > 0) return normalized;
-        }
-      }
-    }
-  } catch {}
-  return [];
-}
+// ═══════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════
 
 export default function TimetablePage() {
-  const [activeTab, setActiveTab] = useState<"subjects" | "teachers" | "grid">("subjects");
+  const queryClient = useQueryClient();
 
-  // Dynamic Class States initialized empty (no hardcoding)
-  const [classes, setClasses] = useState<ClassItem[]>([]);
-  const [selectedClassId, setSelectedClassId] = useState<string>("");
-  const [selectedSectionId, setSelectedSectionId] = useState<string>("");
+  // ── Core State ──
+  const [activeTab, setActiveTab] = useState(1);
+  const [selectedClassId, setSelectedClassId] = useState("");
+  const [selectedSectionId, setSelectedSectionId] = useState("");
 
-  const [configuredSubjects, setConfiguredSubjects] = useState<Subject[]>([]);
-  const [customSubjectInput, setCustomSubjectInput] = useState<string>("");
+  // ── Tab 1: Subjects ──
+  const [subjects, setSubjects] = useState<SubjectConfig[]>([]);
+  const [newSubjName, setNewSubjName] = useState("");
+  const [newSubjPeriods, setNewSubjPeriods] = useState(4);
 
-  const [teachers, setTeachers] = useState<Teacher[]>([]);
-  const [gridData, setGridData] = useState<Record<string, CellData>>({});
+  // ── Tab 3: Grid ──
+  const [grid, setGrid] = useState<(GridCell | null)[][]>(emptyGrid());
+  const [activeCellPicker, setActiveCellPicker] = useState<string | null>(null);
+  const [draggedSubject, setDraggedSubject] = useState<string | null>(null);
 
-  const [isLoadingClasses, setIsLoadingClasses] = useState<boolean>(true);
-  const [isLoadingTeachers, setIsLoadingTeachers] = useState<boolean>(true);
-  const [isSaving, setIsSaving] = useState<boolean>(false);
-  const [toasts, setToasts] = useState<ToastNotification[]>([]);
+  // ═══════════════════════════════════════════════════════
+  // DATA FETCHING (exact same pattern as classes/page.tsx)
+  // ═══════════════════════════════════════════════════════
 
-  const slug = useMemo(() => getSlugFromUrl(), []);
+  // 1. Academic Years
+  const { data: yearsData } = useQuery({
+    queryKey: ["academic-years"],
+    queryFn: () => academicYearApi.list().then((r) => r.data),
+  });
+  const academicYears = asItems<AcademicYear>(yearsData);
+  const currentYear =
+    academicYears.find((y) => y.is_current || y.is_active) || academicYears[0];
 
-  // Toast Handler
-  const showToast = useCallback((message: string, type: "success" | "error" | "info" = "info") => {
-    const id = Math.random().toString(36).substring(2, 9);
-    setToasts((prev) => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
-  }, []);
+  // 2. Classes (depends on academic year)
+  const {
+    data: classesData,
+    isLoading: classesLoading,
+    refetch: refetchClasses,
+  } = useQuery({
+    queryKey: ["classes", currentYear?.id],
+    queryFn: () => classApi.list(currentYear?.id).then((r) => r.data),
+    enabled: !!currentYear?.id,
+  });
+  const classes = useMemo(() => {
+    const c = asItems<ClassItem>(classesData);
+    return [...c].sort(
+      (a, b) =>
+        (a.numeric_level ?? a.class_level ?? 0) -
+        (b.numeric_level ?? b.class_level ?? 0)
+    );
+  }, [classesData]);
 
-  // Fetch Classes strictly from Database / Classes Page
-  const loadClasses = useCallback(async () => {
-    setIsLoadingClasses(true);
+  // 3. Sections (depends on selected class)
+  const { data: sectionsData, isLoading: sectionsLoading } = useQuery({
+    queryKey: ["sections", selectedClassId],
+    queryFn: () => sectionApi.listByClass(selectedClassId).then((r) => r.data),
+    enabled: !!selectedClassId,
+  });
+  const sections = asItems<SectionItem>(sectionsData);
 
-    // 1. Try scanning local cache from Classes page
-    const localClasses = scanLocalStorageForClasses();
-    if (localClasses.length > 0) {
-      setClasses(localClasses);
-      if (!selectedClassId && localClasses.length > 0) {
-        setSelectedClassId(localClasses[0].id);
-        if (localClasses[0].sections.length > 0) {
-          setSelectedSectionId(localClasses[0].sections[0].id);
-        }
-      }
-    }
+  // 4. Staff (same pattern as staff/page.tsx)
+  const { data: staffRaw, isLoading: staffLoading } = useQuery({
+    queryKey: ["staff-list", "timetable"],
+    queryFn: async () => {
+      const res = await api.get("/staff", { params: { per_page: 100 } });
+      return res.data;
+    },
+  });
+  const allStaff = useMemo(
+    () => extractArray(staffRaw) as StaffMember[],
+    [staffRaw]
+  );
 
-    // 2. Fetch Live Classes from Backend
-    const baseUrl = "https://weaischool-backend.onrender.com";
-    const token = getAuthToken();
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      "X-School-Slug": slug
-    };
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-
-    const endpoints = [
-      `/api/v1/academics/classes?slug=${slug}&limit=100`,
-      `/api/v1/classes?slug=${slug}&limit=100`,
-      `/api/v1/schools/${slug}/classes`,
-      `/api/v1/academics/classes`,
-      `/api/v1/classes`
-    ];
-
-    let fetchedClasses: ClassItem[] = [];
-
-    for (const ep of endpoints) {
+  // 5. Existing Timetable (depends on class + section)
+  const { data: timetableRaw, isLoading: timetableLoading } = useQuery({
+    queryKey: ["timetable", selectedClassId, selectedSectionId],
+    queryFn: async () => {
       try {
-        const res = await fetch(`${baseUrl}${ep}`, { method: "GET", headers });
-        if (!res.ok) continue;
-
-        const json = await res.json();
-        const rawList =
-          json.data?.items ||
-          json.data ||
-          json.items ||
-          json.classes ||
-          json.result ||
-          (Array.isArray(json) ? json : []);
-
-        if (Array.isArray(rawList) && rawList.length > 0) {
-          fetchedClasses = normalizeClassesFromDb(rawList);
-          break;
-        }
-      } catch (err) {}
-    }
-
-    if (fetchedClasses.length > 0) {
-      setClasses(fetchedClasses);
-      localStorage.setItem(`weai_${slug}_cached_classes`, JSON.stringify(fetchedClasses));
-
-      if (!selectedClassId) {
-        setSelectedClassId(fetchedClasses[0].id);
-        if (fetchedClasses[0].sections.length > 0) {
-          setSelectedSectionId(fetchedClasses[0].sections[0].id);
-        }
-      }
-      showToast("Loaded real classes from database", "success");
-    } else if (localClasses.length === 0) {
-      showToast("No classes found. Please add classes in Classes panel.", "info");
-    }
-
-    setIsLoadingClasses(false);
-  }, [slug, selectedClassId, showToast]);
-
-  // Fetch Live Teachers from Database / Staff Module
-  const loadTeachers = useCallback(async () => {
-    setIsLoadingTeachers(true);
-
-    const cachedStaff = scanLocalStorageForStaff();
-    if (cachedStaff.length > 0) {
-      setTeachers(cachedStaff);
-    }
-
-    const baseUrl = "https://weaischool-backend.onrender.com";
-    const token = getAuthToken();
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      "X-School-Slug": slug
-    };
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-
-    const staffEndpoints = [
-      `/api/v1/staff?slug=${slug}&limit=100`,
-      `/api/v1/schools/${slug}/staff`,
-      `/api/v1/staff`,
-      `/api/v1/users/staff`
-    ];
-
-    let liveTeachers: Teacher[] = [];
-
-    for (const ep of staffEndpoints) {
-      try {
-        const res = await fetch(`${baseUrl}${ep}`, { method: "GET", headers });
-        if (!res.ok) continue;
-
-        const json = await res.json();
-        const rawStaff =
-          json.data?.items ||
-          json.data ||
-          json.items ||
-          json.staff ||
-          json.result ||
-          (Array.isArray(json) ? json : []);
-
-        if (Array.isArray(rawStaff) && rawStaff.length > 0) {
-          liveTeachers = normalizeTeachers(rawStaff);
-          break;
-        }
-      } catch (err) {}
-    }
-
-    if (liveTeachers.length > 0) {
-      setTeachers(liveTeachers);
-      localStorage.setItem(`weai_${slug}_cached_staff`, JSON.stringify(liveTeachers));
-    }
-
-    setIsLoadingTeachers(false);
-  }, [slug]);
-
-  useEffect(() => {
-    loadClasses();
-    loadTeachers();
-  }, [loadClasses, loadTeachers]);
-
-  // Derived Active Class & Section
-  const currentClass = useMemo(() => {
-    return classes.find((c) => c.id === selectedClassId) || classes[0] || null;
-  }, [classes, selectedClassId]);
-
-  const currentSection = useMemo(() => {
-    if (!currentClass || !currentClass.sections) return null;
-    return currentClass.sections.find((s) => s.id === selectedSectionId) || currentClass.sections[0] || null;
-  }, [currentClass, selectedSectionId]);
-
-  // Auto Select Section when Class changes
-  useEffect(() => {
-    if (currentClass) {
-      if (currentClass.sections && currentClass.sections.length > 0) {
-        const exists = currentClass.sections.some((s) => s.id === selectedSectionId);
-        if (!exists) {
-          setSelectedSectionId(currentClass.sections[0].id);
-        }
-      } else {
-        setSelectedSectionId("");
-      }
-    }
-  }, [currentClass, selectedSectionId]);
-
-  // Load Saved Subjects & Timetable Grid
-  useEffect(() => {
-    if (!selectedClassId) return;
-
-    const secKeyPart = selectedSectionId || "no_sec";
-    const subKey = `weai_${slug}_subjects_${selectedClassId}_${secKeyPart}`;
-    const savedSubs = localStorage.getItem(subKey);
-    if (savedSubs) {
-      try {
-        setConfiguredSubjects(JSON.parse(savedSubs));
+        const res = await api.get("/timetable", {
+          params: {
+            class_id: selectedClassId,
+            section_id: selectedSectionId,
+          },
+        });
+        return res.data;
       } catch {
-        setConfiguredSubjects([]);
+        return [];
       }
-    } else {
-      setConfiguredSubjects([
-        { id: "sub_math", name: "Mathematics", code: "MATH", periodsPerWeek: 6, color: "bg-blue-600" },
-        { id: "sub_sci", name: "Science", code: "SCI", periodsPerWeek: 6, color: "bg-green-600" },
-        { id: "sub_eng", name: "English", code: "ENG", periodsPerWeek: 5, color: "bg-purple-600" },
-        { id: "sub_sst", name: "Social Science", code: "SST", periodsPerWeek: 5, color: "bg-yellow-600" },
-        { id: "sub_hin", name: "Hindi", code: "HIN", periodsPerWeek: 4, color: "bg-red-600" }
-      ]);
-    }
+    },
+    enabled: !!selectedClassId && !!selectedSectionId,
+  });
 
-    const gridKey = `weai_${slug}_grid_${selectedClassId}_${secKeyPart}`;
-    const savedGrid = localStorage.getItem(gridKey);
-    if (savedGrid) {
-      try {
-        setGridData(JSON.parse(savedGrid));
-      } catch {
-        setGridData({});
-      }
-    } else {
-      setGridData({});
-    }
-  }, [selectedClassId, selectedSectionId, slug]);
-
-  const saveSubjects = (subs: Subject[]) => {
-    setConfiguredSubjects(subs);
-    if (selectedClassId) {
-      const secKeyPart = selectedSectionId || "no_sec";
-      localStorage.setItem(`weai_${slug}_subjects_${selectedClassId}_${secKeyPart}`, JSON.stringify(subs));
-    }
-  };
-
-  const handleAddSubject = (name: string) => {
-    if (!name.trim()) return;
-    const exists = configuredSubjects.some((s) => s.name.toLowerCase() === name.trim().toLowerCase());
-    if (exists) {
-      showToast(`${name} is already added`, "info");
+  // ── Populate grid + subjects from existing timetable ──
+  useEffect(() => {
+    if (!timetableRaw) return;
+    const entries = extractArray(timetableRaw) as unknown as TimetableEntry[];
+    if (entries.length === 0) {
+      setGrid(emptyGrid());
       return;
     }
-    const colors = ["bg-blue-600", "bg-green-600", "bg-purple-600", "bg-yellow-600", "bg-red-600", "bg-indigo-600", "bg-pink-600", "bg-teal-600"];
-    const newSub: Subject = {
-      id: `sub_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
-      name: name.trim(),
-      code: name.trim().substring(0, 4).toUpperCase(),
-      periodsPerWeek: 5,
-      color: colors[configuredSubjects.length % colors.length]
-    };
 
-    const updated = [...configuredSubjects, newSub];
-    saveSubjects(updated);
-    setCustomSubjectInput("");
-    showToast(`Added ${name.trim()} to configured subjects`, "success");
-  };
+    const newGrid = emptyGrid();
+    const subjectMap = new Map<string, SubjectConfig>();
+    let colorIdx = 0;
 
-  const handleUpdatePeriods = (id: string, delta: number) => {
-    const updated = configuredSubjects.map((s) => {
-      if (s.id === id) {
-        const count = Math.max(1, s.periodsPerWeek + delta);
-        return { ...s, periodsPerWeek: count };
+    for (const entry of entries) {
+      const day = entry.day_of_week;
+      const period = entry.period_number - 1;
+      if (day >= 0 && day < DAYS.length && period >= 0 && period < PERIODS.length) {
+        const subjName = entry.subject_name || "";
+        const tId = entry.teacher_id || "";
+        const tName = entry.teacher_name || "";
+        const color = SUBJECT_COLORS[colorIdx % SUBJECT_COLORS.length];
+
+        newGrid[day][period] = {
+          subject: subjName,
+          teacherId: tId,
+          teacherName: tName,
+          color: color.bg,
+        };
+
+        if (!subjectMap.has(subjName)) {
+          subjectMap.set(subjName, {
+            name: subjName,
+            periodsPerWeek: 0,
+            color: color.bg,
+            colorIndex: colorIdx % SUBJECT_COLORS.length,
+            teacherId: tId,
+            teacherName: tName,
+          });
+          colorIdx++;
+        }
+        subjectMap.get(subjName)!.periodsPerWeek++;
       }
-      return s;
-    });
-    saveSubjects(updated);
-  };
+    }
 
-  const handleRemoveSubject = (id: string) => {
-    const target = configuredSubjects.find((s) => s.id === id);
-    const updated = configuredSubjects.filter((s) => s.id !== id);
-    saveSubjects(updated);
-    showToast(`Removed ${target?.name || "subject"}`, "info");
-  };
+    setGrid(newGrid);
+    if (subjects.length === 0) {
+      setSubjects(Array.from(subjectMap.values()));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timetableRaw]);
 
-  const handleAssignToGrid = (dayIndex: number, periodId: number, subject: Subject) => {
-    const cellKey = `${dayIndex}_${periodId}`;
-    const newGrid = {
-      ...gridData,
-      [cellKey]: {
-        subjectId: subject.id,
-        subjectName: subject.name
+  // ── Reset section when class changes ──
+  useEffect(() => {
+    setSelectedSectionId("");
+    setGrid(emptyGrid());
+    setActiveCellPicker(null);
+  }, [selectedClassId]);
+
+  // ═══════════════════════════════════════════════════════
+  // SAVE MUTATION
+  // ═══════════════════════════════════════════════════════
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const entries: TimetableEntry[] = [];
+      for (let d = 0; d < DAYS.length; d++) {
+        for (let p = 0; p < PERIODS.length; p++) {
+          const cell = grid[d][p];
+          if (cell) {
+            entries.push({
+              day_of_week: d,
+              period_number: p + 1,
+              subject_name: cell.subject,
+              teacher_id: cell.teacherId || undefined,
+              teacher_name: cell.teacherName || undefined,
+            });
+          }
+        }
       }
-    };
-    setGridData(newGrid);
-    if (selectedClassId) {
-      const secKeyPart = selectedSectionId || "no_sec";
-      localStorage.setItem(`weai_${slug}_grid_${selectedClassId}_${secKeyPart}`, JSON.stringify(newGrid));
-    }
-  };
 
-  const handleClearCell = (dayIndex: number, periodId: number) => {
-    const cellKey = `${dayIndex}_${periodId}`;
-    const newGrid = { ...gridData };
-    delete newGrid[cellKey];
-    setGridData(newGrid);
-    if (selectedClassId) {
-      const secKeyPart = selectedSectionId || "no_sec";
-      localStorage.setItem(`weai_${slug}_grid_${selectedClassId}_${secKeyPart}`, JSON.stringify(newGrid));
-    }
-  };
+      const payload = {
+        class_id: selectedClassId,
+        section_id: selectedSectionId,
+        entries,
+      };
 
-  const handleSaveAll = async () => {
-    setIsSaving(true);
-    const secKeyPart = selectedSectionId || "no_sec";
-    const gridKey = `weai_${slug}_grid_${selectedClassId}_${secKeyPart}`;
-    localStorage.setItem(gridKey, JSON.stringify(gridData));
-
-    const token = getAuthToken();
-    try {
-      await fetch(`https://weaischool-backend.onrender.com/api/v1/timetable`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-School-Slug": slug,
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({
-          class_id: selectedClassId,
-          section_id: selectedSectionId,
-          subjects: configuredSubjects,
-          grid: gridData
-        })
+      try {
+        await api.post("/timetable", payload);
+      } catch {
+        // Try PUT as fallback
+        try {
+          await api.put("/timetable", payload);
+        } catch {
+          // Try PATCH as another fallback
+          await api.patch("/timetable", payload);
+        }
+      }
+    },
+    onSuccess: () => {
+      toast.success("Timetable saved successfully!");
+      queryClient.invalidateQueries({
+        queryKey: ["timetable", selectedClassId, selectedSectionId],
       });
-    } catch {}
+    },
+    onError: () => {
+      toast.error(
+        "Could not save to server. Timetable is saved in your current session."
+      );
+    },
+  });
 
-    setTimeout(() => {
-      setIsSaving(false);
-      showToast("Timetable saved and cached successfully!", "success");
-    }, 500);
-  };
+  // ═══════════════════════════════════════════════════════
+  // SUBJECT HELPERS
+  // ═══════════════════════════════════════════════════════
 
-  const totalWeeklyPeriods = useMemo(() => {
-    return configuredSubjects.reduce((acc, curr) => acc + curr.periodsPerWeek, 0);
-  }, [configuredSubjects]);
+  const totalPeriodsUsed = useMemo(
+    () => subjects.reduce((sum, s) => sum + s.periodsPerWeek, 0),
+    [subjects]
+  );
+
+  const addSubject = useCallback(() => {
+    const name = newSubjName.trim();
+    if (!name) return;
+    if (subjects.some((s) => s.name.toLowerCase() === name.toLowerCase())) {
+      toast.error("Subject already exists");
+      return;
+    }
+    if (totalPeriodsUsed + newSubjPeriods > TOTAL_SLOTS) {
+      toast.error(`Not enough slots. ${TOTAL_SLOTS - totalPeriodsUsed} remaining.`);
+      return;
+    }
+    const cIdx = subjects.length % SUBJECT_COLORS.length;
+    const color = SUBJECT_COLORS[cIdx];
+    setSubjects((prev) => [
+      ...prev,
+      {
+        name,
+        periodsPerWeek: newSubjPeriods,
+        color: color.bg,
+        colorIndex: cIdx,
+        teacherId: "",
+        teacherName: "",
+      },
+    ]);
+    setNewSubjName("");
+    setNewSubjPeriods(4);
+    toast.success(`Subject "${name}" added`);
+  }, [newSubjName, newSubjPeriods, subjects, totalPeriodsUsed]);
+
+  const removeSubject = useCallback(
+    (name: string) => {
+      setSubjects((prev) => prev.filter((s) => s.name !== name));
+      // Clear from grid
+      setGrid((prev) =>
+        prev.map((row) =>
+          row.map((cell) => (cell?.subject === name ? null : cell))
+        )
+      );
+      toast.success(`Subject "${name}" removed`);
+    },
+    []
+  );
+
+  const assignTeacher = useCallback(
+    (subjectName: string, staffId: string) => {
+      const staff = allStaff.find((s) => s.id === staffId);
+      const tName = staff ? getStaffName(staff) : "";
+      setSubjects((prev) =>
+        prev.map((s) =>
+          s.name === subjectName
+            ? { ...s, teacherId: staffId, teacherName: tName }
+            : s
+        )
+      );
+      // Update grid cells with this subject
+      setGrid((prev) =>
+        prev.map((row) =>
+          row.map((cell) =>
+            cell?.subject === subjectName
+              ? { ...cell, teacherId: staffId, teacherName: tName }
+              : cell
+          )
+        )
+      );
+    },
+    [allStaff]
+  );
+
+  const setGridCell = useCallback(
+    (day: number, period: number, subjectName: string | null) => {
+      setGrid((prev) => {
+        const next = prev.map((r) => [...r]);
+        if (!subjectName) {
+          next[day][period] = null;
+        } else {
+          const subj = subjects.find(
+            (s) => s.name.toLowerCase() === subjectName.toLowerCase()
+          );
+          next[day][period] = {
+            subject: subjectName,
+            teacherId: subj?.teacherId || "",
+            teacherName: subj?.teacherName || "",
+            color: subj?.color || SUBJECT_COLORS[0].bg,
+          };
+        }
+        return next;
+      });
+      setActiveCellPicker(null);
+    },
+    [subjects]
+  );
+
+  // ═══════════════════════════════════════════════════════
+  // DERIVED DATA
+  // ═══════════════════════════════════════════════════════
+
+  const selectedClassName =
+    classes.find((c) => c.id === selectedClassId)?.name || "";
+  const selectedSectionName =
+    sections.find((s) => s.id === selectedSectionId)?.name || "";
+  const hasSelection = !!selectedClassId && !!selectedSectionId;
+
+  const assignedSubjects = subjects.filter((s) => s.teacherId);
+  const unassignedSubjects = subjects.filter((s) => !s.teacherId);
+
+  // Count periods placed in grid per subject
+  const gridSubjectCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const row of grid) {
+      for (const cell of row) {
+        if (cell) {
+          counts[cell.subject] = (counts[cell.subject] || 0) + 1;
+        }
+      }
+    }
+    return counts;
+  }, [grid]);
+
+  // ═══════════════════════════════════════════════════════
+  // RENDER
+  // ═══════════════════════════════════════════════════════
 
   return (
-    <div className="min-h-screen bg-[#111827] text-gray-100 p-4 md:p-8">
-      {/* Toast Notification Banner */}
-      <div className="fixed top-5 right-5 z-50 flex flex-col gap-2 max-w-md pointer-events-none">
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            className={`pointer-events-auto px-4 py-3 rounded-lg shadow-xl text-sm font-medium border flex items-center gap-3 transition-all ${
-              t.type === "success"
-                ? "bg-emerald-950/90 border-emerald-500 text-emerald-200"
-                : t.type === "error"
-                ? "bg-rose-950/90 border-rose-500 text-rose-200"
-                : "bg-blue-950/90 border-blue-500 text-blue-200"
-            }`}
-          >
-            {t.type === "success" && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />}
-            {t.type === "error" && <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />}
-            {t.type === "info" && <Sparkles className="w-5 h-5 text-blue-400 shrink-0" />}
-            <span>{t.message}</span>
-          </div>
-        ))}
+    <div className="max-w-7xl mx-auto space-y-6">
+      {/* ── HEADER ── */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+            <Calendar className="w-7 h-7 text-blue-400" />
+            Smart Timetable Builder
+          </h1>
+          <p className="text-gray-400 text-sm mt-1">
+            {currentYear && (
+              <>
+                Academic Year:{" "}
+                <span className="text-blue-400 font-medium">
+                  {currentYear.name}
+                </span>
+              </>
+            )}
+            {hasSelection && (
+              <>
+                {" "}
+                · {selectedClassName} · Section {selectedSectionName}
+              </>
+            )}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => refetchClasses()}
+          className="flex items-center gap-2 px-4 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl transition-colors text-sm self-start"
+        >
+          <RefreshCw className="w-4 h-4" />
+          Refresh
+        </button>
       </div>
 
-      {/* Main Header */}
-      <div className="max-w-7xl mx-auto space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight text-white flex items-center gap-3">
-              Smart Timetable Builder
-              {(isLoadingClasses || isLoadingTeachers) && <RefreshCw className="w-5 h-5 text-blue-400 animate-spin" />}
-            </h1>
-            <p className="text-gray-400 text-sm mt-1">
-              Setup section-wise subjects, assign teachers, and build schedules.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => {
-                loadClasses();
-                loadTeachers();
-              }}
-              className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm font-medium border border-gray-700 flex items-center gap-2 transition"
-              title="Sync Data"
-            >
-              <RefreshCw className={`w-4 h-4 ${(isLoadingClasses || isLoadingTeachers) ? "animate-spin" : ""}`} />
-              Sync Data
-            </button>
-
-            <button
-              onClick={handleSaveAll}
-              disabled={isSaving}
-              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium text-sm flex items-center gap-2 shadow-lg shadow-blue-600/20 transition disabled:opacity-50"
-            >
-              <Save className="w-4 h-4" />
-              {isSaving ? "Saving..." : "Save Timetable"}
-            </button>
-          </div>
-        </div>
-
-        {/* 3 Navigation Tabs */}
-        <div className="flex items-center gap-2 border-b border-gray-800 pb-1">
-          <button
-            onClick={() => setActiveTab("subjects")}
-            className={`px-5 py-2.5 rounded-t-lg font-medium text-sm flex items-center gap-2 border-b-2 transition ${
-              activeTab === "subjects"
-                ? "bg-blue-600 text-white border-blue-400"
-                : "text-gray-400 hover:text-white hover:bg-gray-800/60 border-transparent"
-            }`}
-          >
-            <BookOpen className="w-4 h-4" />
-            1. Subjects Setup
-          </button>
-
-          <button
-            onClick={() => setActiveTab("teachers")}
-            className={`px-5 py-2.5 rounded-t-lg font-medium text-sm flex items-center gap-2 border-b-2 transition ${
-              activeTab === "teachers"
-                ? "bg-blue-600 text-white border-blue-400"
-                : "text-gray-400 hover:text-white hover:bg-gray-800/60 border-transparent"
-            }`}
-          >
-            <Users className="w-4 h-4" />
-            2. Assign Teachers
-          </button>
-
-          <button
-            onClick={() => setActiveTab("grid")}
-            className={`px-5 py-2.5 rounded-t-lg font-medium text-sm flex items-center gap-2 border-b-2 transition ${
-              activeTab === "grid"
-                ? "bg-blue-600 text-white border-blue-400"
-                : "text-gray-400 hover:text-white hover:bg-gray-800/60 border-transparent"
-            }`}
-          >
-            <Calendar className="w-4 h-4" />
-            3. Build Grid
-          </button>
-        </div>
-
-        {/* Class & Section Selection Panel (Dynamic DB values) */}
-        <div className="bg-gray-900/90 border border-gray-800 rounded-xl p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-              SELECT CLASS
+      {/* ── CLASS + SECTION SELECTORS ── */}
+      <div className="bg-gray-900/80 border border-gray-800 rounded-xl p-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Class Dropdown */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-300">
+              Select Class
             </label>
-            <div className="relative">
+            {classesLoading ? (
+              <div className="flex items-center gap-2 px-4 py-3 bg-gray-950 border border-gray-800 rounded-xl text-gray-500 text-sm">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Loading classes from database...
+              </div>
+            ) : classes.length === 0 ? (
+              <div className="px-4 py-3 bg-gray-950 border border-red-500/30 rounded-xl text-red-400 text-sm flex items-center gap-2">
+                <AlertCircle className="w-4 h-4" />
+                No classes found. Add classes first.
+              </div>
+            ) : (
               <select
                 value={selectedClassId}
-                onChange={(e) => {
-                  const newId = e.target.value;
-                  setSelectedClassId(newId);
-                  const cls = classes.find((c) => c.id === newId);
-                  if (cls && cls.sections && cls.sections.length > 0) {
-                    setSelectedSectionId(cls.sections[0].id);
-                  } else {
-                    setSelectedSectionId("");
-                  }
-                }}
-                className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg px-4 py-2.5 text-sm appearance-none focus:outline-none focus:border-blue-500 transition cursor-pointer"
+                onChange={(e) => setSelectedClassId(e.target.value)}
+                className="w-full px-4 py-3 bg-gray-950 border border-gray-800 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none cursor-pointer"
               >
-                {classes.length === 0 ? (
-                  <option value="">Loading classes from database...</option>
-                ) : (
-                  classes.map((cls) => (
-                    <option key={cls.id} value={cls.id}>
-                      {cls.name}
-                    </option>
-                  ))
-                )}
+                <option value="">-- Choose a class --</option>
+                {classes.map((cls) => (
+                  <option key={cls.id} value={cls.id}>
+                    {cls.name}
+                    {cls.total_sections
+                      ? ` (${cls.total_sections} sections)`
+                      : ""}
+                  </option>
+                ))}
               </select>
-              <ChevronDown className="w-4 h-4 text-gray-400 absolute right-3 top-3.5 pointer-events-none" />
-            </div>
+            )}
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
-              SELECT SECTION
+          {/* Section Dropdown */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-300">
+              Select Section
             </label>
-            <div className="relative">
+            {!selectedClassId ? (
+              <div className="px-4 py-3 bg-gray-950 border border-gray-800 rounded-xl text-gray-600 text-sm">
+                Select a class first
+              </div>
+            ) : sectionsLoading ? (
+              <div className="flex items-center gap-2 px-4 py-3 bg-gray-950 border border-gray-800 rounded-xl text-gray-500 text-sm">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Loading sections...
+              </div>
+            ) : sections.length === 0 ? (
+              <div className="px-4 py-3 bg-gray-950 border border-yellow-500/30 rounded-xl text-yellow-400 text-sm flex items-center gap-2">
+                <AlertCircle className="w-4 h-4" />
+                No sections created. Add in Classes page.
+              </div>
+            ) : (
               <select
                 value={selectedSectionId}
                 onChange={(e) => setSelectedSectionId(e.target.value)}
-                disabled={!currentClass || !currentClass.sections || currentClass.sections.length === 0}
-                className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg px-4 py-2.5 text-sm appearance-none focus:outline-none focus:border-blue-500 transition disabled:opacity-50 cursor-pointer"
+                className="w-full px-4 py-3 bg-gray-950 border border-gray-800 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none cursor-pointer"
               >
-                {!currentClass || !currentClass.sections || currentClass.sections.length === 0 ? (
-                  <option value="">No sections created for this class</option>
-                ) : (
-                  currentClass.sections.map((sec) => (
-                    <option key={sec.id} value={sec.id}>
-                      {sec.name}
-                    </option>
-                  ))
-                )}
+                <option value="">-- Choose a section --</option>
+                {sections.map((sec) => (
+                  <option key={sec.id} value={sec.id}>
+                    Section {sec.name} ({sec.current_strength || 0}/
+                    {sec.max_students} students)
+                  </option>
+                ))}
               </select>
-              <ChevronDown className="w-4 h-4 text-gray-400 absolute right-3 top-3.5 pointer-events-none" />
-            </div>
+            )}
           </div>
         </div>
+      </div>
 
-        {/* --- TAB 1: SUBJECTS SETUP --- */}
-        {activeTab === "subjects" && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-5 bg-gray-900/80 border border-gray-800 rounded-xl p-5 space-y-4">
-              <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-                <Plus className="w-5 h-5 text-blue-400" />
-                Quick Add Subjects
-              </h3>
+      {/* ── NO SELECTION MESSAGE ── */}
+      {!hasSelection && (
+        <div className="bg-gray-900/80 border border-gray-800 rounded-2xl p-12 text-center">
+          <Calendar className="w-16 h-16 text-gray-700 mx-auto mb-4" />
+          <h3 className="text-xl font-bold text-white mb-2">
+            Select Class & Section
+          </h3>
+          <p className="text-gray-400">
+            Choose a class and section above to start building the timetable.
+          </p>
+        </div>
+      )}
 
-              <div className="flex gap-2">
-                <div className="relative flex-1">
+      {/* ── TABS + CONTENT ── */}
+      {hasSelection && (
+        <>
+          {/* Tab Buttons */}
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {[
+              { n: 1, label: "1. Subjects Setup", icon: BookOpen },
+              { n: 2, label: "2. Assign Teachers", icon: Users },
+              { n: 3, label: "3. Build Grid", icon: Calendar },
+            ].map((tab) => (
+              <button
+                key={tab.n}
+                type="button"
+                onClick={() => setActiveTab(tab.n)}
+                className={`flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold whitespace-nowrap transition-all ${
+                  activeTab === tab.n
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20"
+                    : "bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white"
+                }`}
+              >
+                <tab.icon className="w-4 h-4" />
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          {/* ══════════════════════════════════════════════ */}
+          {/* TAB 1: SUBJECTS SETUP                         */}
+          {/* ══════════════════════════════════════════════ */}
+          {activeTab === 1 && (
+            <div className="space-y-5">
+              {/* Add Subject Form */}
+              <div className="bg-gray-900/80 border border-gray-800 rounded-xl p-5">
+                <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                  <Plus className="w-5 h-5 text-blue-400" />
+                  Add Subject
+                </h3>
+                <div className="flex flex-col sm:flex-row gap-3">
                   <input
                     type="text"
-                    value={customSubjectInput}
-                    onChange={(e) => setCustomSubjectInput(e.target.value)}
-                    placeholder="Type to search or add custom"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleAddSubject(customSubjectInput);
-                    }}
-                    className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                    value={newSubjName}
+                    onChange={(e) => setNewSubjName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && addSubject()}
+                    placeholder="e.g. Mathematics, English, Physics..."
+                    className="flex-1 px-4 py-3 bg-gray-950 border border-gray-800 rounded-xl text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
-                  <Search className="w-4 h-4 text-gray-500 absolute left-3 top-2.5" />
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-gray-400 whitespace-nowrap">
+                      Periods/Week:
+                    </label>
+                    <select
+                      value={newSubjPeriods}
+                      onChange={(e) =>
+                        setNewSubjPeriods(Number(e.target.value))
+                      }
+                      className="px-3 py-3 bg-gray-950 border border-gray-800 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addSubject}
+                    disabled={!newSubjName.trim()}
+                    className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleAddSubject(customSubjectInput)}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition"
-                >
-                  Add
-                </button>
-              </div>
-
-              <div className="space-y-2 pt-2">
-                <p className="text-xs text-gray-400 uppercase tracking-wider">PRESET SUBJECT CHIPS</p>
-                <div className="flex flex-wrap gap-2">
-                  {PRESET_SUBJECTS.map((name) => {
-                    const isConfigured = configuredSubjects.some(
-                      (s) => s.name.toLowerCase() === name.toLowerCase()
-                    );
-                    return (
-                      <button
-                        key={name}
-                        onClick={() => !isConfigured && handleAddSubject(name)}
-                        disabled={isConfigured}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border flex items-center gap-1.5 transition ${
-                          isConfigured
-                            ? "bg-gray-800/40 border-gray-800 text-gray-500 cursor-not-allowed"
-                            : "bg-gray-800/80 hover:bg-blue-900/40 border-gray-700 hover:border-blue-500 text-gray-200"
-                        }`}
-                      >
-                        {isConfigured ? <Check className="w-3 h-3 text-emerald-400" /> : <Plus className="w-3 h-3 text-blue-400" />}
-                        {name}
-                      </button>
-                    );
-                  })}
+                <div className="mt-3 flex items-center gap-4 text-xs text-gray-500">
+                  <span>
+                    Total periods:{" "}
+                    <span
+                      className={
+                        totalPeriodsUsed > TOTAL_SLOTS
+                          ? "text-red-400 font-bold"
+                          : "text-blue-400 font-bold"
+                      }
+                    >
+                      {totalPeriodsUsed}
+                    </span>
+                    /{TOTAL_SLOTS}
+                  </span>
+                  <span>
+                    Remaining:{" "}
+                    <span className="text-green-400 font-bold">
+                      {TOTAL_SLOTS - totalPeriodsUsed}
+                    </span>
+                  </span>
                 </div>
               </div>
-            </div>
 
-            <div className="lg:col-span-7 bg-gray-900/80 border border-gray-800 rounded-xl p-5 space-y-4">
-              <div className="flex items-center justify-between border-b border-gray-800 pb-3">
-                <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-                  <BookOpen className="w-5 h-5 text-blue-400" />
-                  Configured Subjects for {currentClass?.name || "Class"} {currentSection ? `- ${currentSection.name}` : ""}
-                </h3>
-                <span className="px-2.5 py-1 bg-blue-950 text-blue-300 text-xs font-semibold rounded-full border border-blue-800">
-                  Total Weekly Periods: {totalWeeklyPeriods}
-                </span>
-              </div>
-
-              {configuredSubjects.length === 0 ? (
-                <div className="py-12 text-center text-gray-500 border border-dashed border-gray-800 rounded-xl">
-                  <BookOpen className="w-10 h-10 mx-auto text-gray-600 mb-2" />
-                  <p className="text-sm">No subjects configured for this section</p>
-                  <p className="text-xs text-gray-600 mt-1">Click a chip on the left to add subjects.</p>
+              {/* Subjects List */}
+              {subjects.length === 0 ? (
+                <div className="bg-gray-900/80 border border-gray-800 rounded-xl p-10 text-center">
+                  <BookOpen className="w-12 h-12 text-gray-700 mx-auto mb-3" />
+                  <p className="text-gray-400">
+                    No subjects added yet. Add subjects above to get started.
+                  </p>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {configuredSubjects.map((subject) => (
-                    <div
-                      key={subject.id}
-                      className="bg-gray-950 border border-gray-800 rounded-lg p-3.5 flex items-center justify-between gap-4 hover:border-gray-700 transition"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={`w-3 h-10 rounded-full ${subject.color || "bg-blue-600"}`} />
-                        <div>
-                          <h4 className="font-medium text-white text-sm">{subject.name}</h4>
-                          <span className="text-xs text-gray-500 font-mono">Code: {subject.code}</span>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {subjects.map((subj) => {
+                    const c = SUBJECT_COLORS[subj.colorIndex];
+                    const placed = gridSubjectCounts[subj.name] || 0;
+                    return (
+                      <div
+                        key={subj.name}
+                        className={`${c.light} border ${c.border} rounded-xl p-4 flex items-center justify-between`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div
+                            className={`w-3 h-8 rounded-full ${subj.color}`}
+                          />
+                          <div>
+                            <p className="text-white font-semibold text-sm">
+                              {subj.name}
+                            </p>
+                            <p className="text-xs text-gray-400">
+                              Target: {subj.periodsPerWeek}/week · Placed:{" "}
+                              <span
+                                className={
+                                  placed >= subj.periodsPerWeek
+                                    ? "text-green-400"
+                                    : "text-yellow-400"
+                                }
+                              >
+                                {placed}
+                              </span>
+                            </p>
+                            {subj.teacherName && (
+                              <p className="text-xs text-gray-500 mt-0.5">
+                                👤 {subj.teacherName}
+                              </p>
+                            )}
+                          </div>
                         </div>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center bg-gray-900 border border-gray-800 rounded-lg">
-                          <button
-                            onClick={() => handleUpdatePeriods(subject.id, -1)}
-                            className="px-2.5 py-1 text-gray-400 hover:text-white font-bold"
-                          >
-                            -
-                          </button>
-                          <span className="px-3 text-xs font-semibold text-blue-400">
-                            {subject.periodsPerWeek} / wk
-                          </span>
-                          <button
-                            onClick={() => handleUpdatePeriods(subject.id, 1)}
-                            className="px-2.5 py-1 text-gray-400 hover:text-white font-bold"
-                          >
-                            +
-                          </button>
-                        </div>
-
                         <button
-                          onClick={() => handleRemoveSubject(subject.id)}
-                          className="p-1.5 text-gray-500 hover:text-rose-400 hover:bg-rose-950/30 rounded-lg transition"
+                          type="button"
+                          onClick={() => removeSubject(subj.name)}
+                          className="p-2 text-gray-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
+                </div>
+              )}
+
+              {subjects.length > 0 && (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab(2)}
+                    className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold transition-colors"
+                  >
+                    Next: Assign Teachers →
+                  </button>
                 </div>
               )}
             </div>
-          </div>
-        )}
+          )}
 
-        {/* --- TAB 2: ASSIGN TEACHERS --- */}
-        {activeTab === "teachers" && (
-          <div className="bg-gray-900/80 border border-gray-800 rounded-xl p-5 space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-                  <Users className="w-5 h-5 text-blue-400" />
-                  Faculty & Subject Assignments
-                </h3>
-                <p className="text-xs text-gray-400 mt-1">
-                  Live staff database & subject workload distribution.
-                </p>
-              </div>
-              <span className="text-xs px-3 py-1 bg-gray-800 text-gray-300 rounded-lg border border-gray-700 font-mono">
-                Total Faculty: {teachers.length}
-              </span>
-            </div>
-
-            {teachers.length === 0 ? (
-              <div className="py-12 text-center text-gray-500 border border-dashed border-gray-800 rounded-xl">
-                <Users className="w-10 h-10 mx-auto text-gray-600 mb-2" />
-                <p className="text-sm font-medium text-gray-300">No teachers found in database for this school</p>
-                <p className="text-xs text-gray-500 mt-1">Please add staff members in the Staff management section.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {teachers.map((teacher) => {
-                  const percentage = Math.round((teacher.assignedPeriodsCount / teacher.maxPeriodsPerWeek) * 100);
-                  return (
-                    <div
-                      key={teacher.id}
-                      className="bg-gray-950 border border-gray-800 rounded-xl p-4 space-y-3 hover:border-gray-700 transition"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <h4 className="font-semibold text-white text-base flex items-center gap-2">
-                            <UserCheck className="w-4 h-4 text-emerald-400" />
-                            {teacher.name}
-                          </h4>
-                          <p className="text-xs text-gray-400">{teacher.designation} • {teacher.department}</p>
-                        </div>
-                        <span className="text-xs px-2.5 py-1 bg-gray-900 border border-gray-800 text-gray-300 rounded-full font-mono">
-                          {teacher.assignedPeriodsCount} / {teacher.maxPeriodsPerWeek} periods
-                        </span>
-                      </div>
-
-                      <div className="space-y-1">
-                        <div className="w-full bg-gray-900 h-2 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full transition-all ${
-                              percentage > 90 ? "bg-rose-500" : percentage > 75 ? "bg-yellow-500" : "bg-blue-500"
-                            }`}
-                            style={{ width: `${Math.min(100, Math.max(5, percentage))}%` }}
-                          />
-                        </div>
-                        <div className="flex justify-between text-[10px] text-gray-500">
-                          <span>Workload: {percentage}%</span>
-                          <span>Max Cap: {teacher.maxPeriodsPerWeek}</span>
-                        </div>
-                      </div>
-
-                      <div className="pt-1">
-                        <span className="text-[11px] text-gray-400 uppercase tracking-wider block mb-1">
-                          ASSIGNED SUBJECTS / SPECIALIZATION
-                        </span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {teacher.assignedSubjects.map((sub) => (
-                            <span
-                              key={sub}
-                              className="px-2 py-0.5 bg-blue-950/60 border border-blue-800/60 text-blue-300 text-xs rounded-md"
-                            >
-                              {sub}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* --- TAB 3: BUILD GRID --- */}
-        {activeTab === "grid" && (
-          <div className="space-y-6">
-            <div className="bg-gray-900/80 border border-gray-800 rounded-xl p-4 space-y-3">
-              <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider block">
-                AVAILABLE SUBJECT PALETTE (Click or Drag to Schedule)
-              </span>
-
-              {configuredSubjects.length === 0 ? (
-                <p className="text-xs text-gray-500 italic">No subjects configured. Switch to Tab 1 to add subjects first.</p>
+          {/* ══════════════════════════════════════════════ */}
+          {/* TAB 2: ASSIGN TEACHERS                        */}
+          {/* ══════════════════════════════════════════════ */}
+          {activeTab === 2 && (
+            <div className="space-y-5">
+              {subjects.length === 0 ? (
+                <div className="bg-gray-900/80 border border-gray-800 rounded-xl p-10 text-center">
+                  <AlertCircle className="w-12 h-12 text-yellow-600 mx-auto mb-3" />
+                  <h3 className="text-lg font-bold text-white mb-2">
+                    No Subjects Yet
+                  </h3>
+                  <p className="text-gray-400 mb-4">
+                    Go to Tab 1 and add subjects first.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab(1)}
+                    className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold transition-colors"
+                  >
+                    ← Go to Subjects Setup
+                  </button>
+                </div>
+              ) : staffLoading ? (
+                <div className="flex items-center justify-center py-16">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                  <span className="ml-3 text-gray-400">
+                    Loading teachers from database...
+                  </span>
+                </div>
+              ) : allStaff.length === 0 ? (
+                <div className="bg-gray-900/80 border border-gray-800 rounded-xl p-10 text-center">
+                  <Users className="w-12 h-12 text-gray-700 mx-auto mb-3" />
+                  <h3 className="text-lg font-bold text-white mb-2">
+                    No Teachers Found
+                  </h3>
+                  <p className="text-gray-400">
+                    Add teachers in the Staff page first, then come back to
+                    assign them.
+                  </p>
+                </div>
               ) : (
-                <div className="flex flex-wrap gap-3">
-                  {configuredSubjects.map((sub) => (
-                    <div
-                      key={sub.id}
-                      draggable
-                      onDragStart={(e) => {
-                        e.dataTransfer.setData("application/json", JSON.stringify(sub));
-                      }}
-                      className="px-3 py-2 bg-gray-950 border border-gray-700 hover:border-blue-500 rounded-lg text-sm text-white font-medium cursor-grab active:cursor-grabbing flex items-center gap-2 shadow-sm transition"
-                    >
-                      <div className={`w-3 h-3 rounded-full ${sub.color || "bg-blue-600"}`} />
-                      <span>{sub.name}</span>
-                      <span className="text-xs text-gray-500 font-mono">({sub.periodsPerWeek}/wk)</span>
+                <>
+                  {unassignedSubjects.length > 0 && (
+                    <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-4 flex items-center gap-3">
+                      <AlertCircle className="w-5 h-5 text-yellow-400 shrink-0" />
+                      <p className="text-sm text-yellow-300">
+                        {unassignedSubjects.length} subject(s) still need a
+                        teacher assigned.
+                      </p>
                     </div>
-                  ))}
-                </div>
+                  )}
+
+                  <div className="space-y-3">
+                    {subjects.map((subj) => {
+                      const c = SUBJECT_COLORS[subj.colorIndex];
+                      return (
+                        <div
+                          key={subj.name}
+                          className="bg-gray-900/80 border border-gray-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-3"
+                        >
+                          <div className="flex items-center gap-3 sm:w-48 shrink-0">
+                            <div
+                              className={`w-3 h-8 rounded-full ${subj.color}`}
+                            />
+                            <span className="text-white font-semibold text-sm">
+                              {subj.name}
+                            </span>
+                          </div>
+                          <div className="flex-1">
+                            <select
+                              value={subj.teacherId}
+                              onChange={(e) =>
+                                assignTeacher(subj.name, e.target.value)
+                              }
+                              className={`w-full px-4 py-2.5 bg-gray-950 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none cursor-pointer ${
+                                subj.teacherId
+                                  ? "border-green-500/30 text-green-300"
+                                  : "border-gray-800 text-gray-400"
+                              }`}
+                            >
+                              <option value="">
+                                -- Assign a teacher --
+                              </option>
+                              {allStaff.map((s) => {
+                                const sName = getStaffName(s);
+                                const desig =
+                                  s.designation ||
+                                  String(
+                                    (s.extras as Record<string, unknown>)
+                                      ?.designation || "Teacher"
+                                  );
+                                const subjs = getStaffSubjects(s);
+                                return (
+                                  <option key={s.id} value={s.id}>
+                                    {sName} ({desig})
+                                    {subjs ? ` — ${subjs}` : ""}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+                          {subj.teacherId && (
+                            <div className="flex items-center gap-1.5 text-xs text-green-400 shrink-0">
+                              <Check className="w-4 h-4" />
+                              Assigned
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex justify-between">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab(1)}
+                      className="px-6 py-3 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl text-sm font-medium transition-colors"
+                    >
+                      ← Subjects
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab(3)}
+                      className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold transition-colors"
+                    >
+                      Next: Build Grid →
+                    </button>
+                  </div>
+                </>
               )}
             </div>
+          )}
 
-            <div className="bg-gray-900/90 border border-gray-800 rounded-xl p-4 overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[900px]">
-                <thead>
-                  <tr className="border-b border-gray-800">
-                    <th className="py-3 px-4 text-xs font-semibold text-gray-400 uppercase tracking-wider w-32">
-                      Day / Period
-                    </th>
-                    {PERIODS.map((p) => (
-                      <th key={p.id} className="py-3 px-2 text-center border-l border-gray-800">
-                        <div className="text-xs font-semibold text-gray-200">{p.name}</div>
-                        <div className="text-[10px] text-gray-500 font-mono">{p.time}</div>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-800/60">
-                  {DAYS.map((day, dayIdx) => (
-                    <tr key={day} className="hover:bg-gray-800/30 transition">
-                      <td className="py-3 px-4 text-sm font-semibold text-gray-300 bg-gray-950/40">
-                        {day}
-                      </td>
-                      {PERIODS.map((period) => {
-                        const cellKey = `${dayIdx}_${period.id}`;
-                        const cell = gridData[cellKey];
-
+          {/* ══════════════════════════════════════════════ */}
+          {/* TAB 3: BUILD GRID                             */}
+          {/* ══════════════════════════════════════════════ */}
+          {activeTab === 3 && (
+            <div className="space-y-5">
+              {subjects.length === 0 ? (
+                <div className="bg-gray-900/80 border border-gray-800 rounded-xl p-10 text-center">
+                  <AlertCircle className="w-12 h-12 text-yellow-600 mx-auto mb-3" />
+                  <h3 className="text-lg font-bold text-white mb-2">
+                    No Subjects Configured
+                  </h3>
+                  <p className="text-gray-400 mb-4">
+                    Add subjects in Tab 1 and assign teachers in Tab 2 first.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab(1)}
+                    className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-bold transition-colors"
+                  >
+                    ← Go to Subjects Setup
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* Subject Palette (draggable) */}
+                  <div className="bg-gray-900/80 border border-gray-800 rounded-xl p-4">
+                    <p className="text-xs text-gray-500 mb-3 uppercase tracking-wider font-semibold">
+                      Drag subjects to grid or click cells to assign
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {subjects.map((subj) => {
+                        const placed = gridSubjectCounts[subj.name] || 0;
+                        const c = SUBJECT_COLORS[subj.colorIndex];
                         return (
-                          <td
-                            key={period.id}
-                            onDragOver={(e) => e.preventDefault()}
-                            onDrop={(e) => {
-                              e.preventDefault();
-                              try {
-                                const raw = e.dataTransfer.getData("application/json");
-                                if (raw) {
-                                  const sub = JSON.parse(raw);
-                                  handleAssignToGrid(dayIdx, period.id, sub);
-                                }
-                              } catch {}
-                            }}
-                            className="p-1.5 border-l border-gray-800/60 h-20 text-center relative group"
+                          <div
+                            key={subj.name}
+                            draggable
+                            onDragStart={() => setDraggedSubject(subj.name)}
+                            onDragEnd={() => setDraggedSubject(null)}
+                            className={`${c.light} border ${c.border} rounded-lg px-3 py-2 flex items-center gap-2 cursor-grab active:cursor-grabbing hover:opacity-80 transition-opacity select-none`}
                           >
-                            {cell ? (
-                              <div className="w-full h-full bg-blue-950/40 border border-blue-800/60 rounded-lg p-2 flex flex-col justify-between relative group/cell">
-                                <button
-                                  onClick={() => handleClearCell(dayIdx, period.id)}
-                                  className="absolute top-1 right-1 opacity-0 group-hover/cell:opacity-100 p-1 text-gray-400 hover:text-rose-400 bg-gray-900/80 rounded transition"
-                                  title="Clear slot"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
-                                <span className="text-xs font-semibold text-blue-200 line-clamp-1 pr-4">
-                                  {cell.subjectName}
-                                </span>
-                                <span className="text-[10px] text-gray-400 flex items-center justify-center gap-1">
-                                  <Clock className="w-2.5 h-2.5" />
-                                  {currentClass?.name}
-                                </span>
-                              </div>
-                            ) : (
-                              <div className="w-full h-full border border-dashed border-gray-800 rounded-lg flex items-center justify-center text-[11px] text-gray-600 hover:border-gray-700 hover:bg-gray-950/40 transition">
-                                Drop Subject
-                              </div>
-                            )}
-                          </td>
+                            <GripVertical className="w-3 h-3 text-gray-500" />
+                            <div
+                              className={`w-2.5 h-2.5 rounded-full ${subj.color}`}
+                            />
+                            <span className="text-xs font-semibold text-white">
+                              {subj.name}
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              ({placed}/{subj.periodsPerWeek})
+                            </span>
+                          </div>
                         );
                       })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                    </div>
+                  </div>
+
+                  {/* Timetable Grid */}
+                  {timetableLoading ? (
+                    <div className="flex items-center justify-center py-16">
+                      <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+                      <span className="ml-3 text-gray-400">
+                        Loading existing timetable...
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="bg-gray-900/80 border border-gray-800 rounded-xl overflow-x-auto">
+                      <table className="w-full min-w-[700px] border-collapse">
+                        <thead>
+                          <tr>
+                            <th className="sticky left-0 z-10 bg-gray-900 border-b border-r border-gray-800 px-3 py-3 text-xs text-gray-500 font-semibold w-16">
+                              <Clock className="w-4 h-4 mx-auto" />
+                            </th>
+                            {DAYS.map((day, di) => (
+                              <th
+                                key={day}
+                                className="border-b border-gray-800 px-2 py-3 text-xs font-bold text-gray-300 text-center"
+                              >
+                                {DAY_SHORT[di]}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {PERIODS.map((p, pi) => (
+                            <tr key={p}>
+                              <td className="sticky left-0 z-10 bg-gray-900 border-r border-gray-800 px-2 py-1 text-center">
+                                <span className="text-xs font-bold text-gray-500">
+                                  P{p}
+                                </span>
+                              </td>
+                              {DAYS.map((_, di) => {
+                                const cell = grid[di][pi];
+                                const cellKey = `${di}-${pi}`;
+                                const isPickerOpen =
+                                  activeCellPicker === cellKey;
+                                const c = cell
+                                  ? SUBJECT_COLORS.find(
+                                      (sc) => sc.bg === cell.color
+                                    ) || SUBJECT_COLORS[0]
+                                  : null;
+
+                                return (
+                                  <td
+                                    key={cellKey}
+                                    className="border border-gray-800/50 p-1 relative"
+                                    onDragOver={(e) => {
+                                      e.preventDefault();
+                                      e.dataTransfer.dropEffect = "move";
+                                    }}
+                                    onDrop={(e) => {
+                                      e.preventDefault();
+                                      const subj =
+                                        draggedSubject ||
+                                        e.dataTransfer.getData(
+                                          "text/plain"
+                                        );
+                                      if (subj) {
+                                        setGridCell(di, pi, subj);
+                                        setDraggedSubject(null);
+                                      }
+                                    }}
+                                  >
+                                    {cell ? (
+                                      <div
+                                        className={`${c?.light || ""} border ${c?.border || ""} rounded-lg px-2 py-2 text-center group relative min-h-[56px] flex flex-col items-center justify-center`}
+                                      >
+                                        <span
+                                          className={`text-xs font-bold ${c?.text || "text-white"} truncate w-full`}
+                                        >
+                                          {cell.subject}
+                                        </span>
+                                        {cell.teacherName && (
+                                          <span className="text-[10px] text-gray-500 truncate w-full mt-0.5">
+                                            {cell.teacherName.split(" ")[0]}
+                                          </span>
+                                        )}
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setGridCell(di, pi, null);
+                                          }}
+                                          className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                                        >
+                                          <X className="w-2.5 h-2.5" />
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setActiveCellPicker(
+                                            isPickerOpen ? null : cellKey
+                                          )
+                                        }
+                                        className="w-full min-h-[56px] rounded-lg border border-dashed border-gray-800 hover:border-blue-500/40 hover:bg-blue-500/5 transition-all flex items-center justify-center"
+                                      >
+                                        <Plus className="w-3.5 h-3.5 text-gray-700" />
+                                      </button>
+                                    )}
+
+                                    {/* Cell Picker Dropdown */}
+                                    {isPickerOpen && !cell && (
+                                      <div className="absolute top-full left-0 z-30 mt-1 w-44 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl py-1 max-h-48 overflow-y-auto">
+                                        {subjects.map((subj) => {
+                                          const sc =
+                                            SUBJECT_COLORS[subj.colorIndex];
+                                          return (
+                                            <button
+                                              key={subj.name}
+                                              type="button"
+                                              onClick={() =>
+                                                setGridCell(
+                                                  di,
+                                                  pi,
+                                                  subj.name
+                                                )
+                                              }
+                                              className="w-full px-3 py-2 text-left text-xs hover:bg-gray-800 flex items-center gap-2 transition-colors"
+                                            >
+                                              <div
+                                                className={`w-2 h-2 rounded-full ${subj.color}`}
+                                              />
+                                              <span className="text-white font-medium truncate">
+                                                {subj.name}
+                                              </span>
+                                              {subj.teacherName && (
+                                                <span className="text-gray-500 truncate ml-auto text-[10px]">
+                                                  {subj.teacherName.split(
+                                                    " "
+                                                  )[0]}
+                                                </span>
+                                              )}
+                                            </button>
+                                          );
+                                        })}
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setActiveCellPicker(null)
+                                          }
+                                          className="w-full px-3 py-2 text-left text-xs text-gray-500 hover:bg-gray-800 border-t border-gray-800 mt-1"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    )}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Grid Stats + Save */}
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div className="flex flex-wrap gap-4 text-xs text-gray-400">
+                      <span>
+                        Filled:{" "}
+                        <span className="text-white font-bold">
+                          {Object.values(gridSubjectCounts).reduce(
+                            (a, b) => a + b,
+                            0
+                          )}
+                        </span>
+                        /{TOTAL_SLOTS}
+                      </span>
+                      {subjects.map((subj) => {
+                        const placed = gridSubjectCounts[subj.name] || 0;
+                        const done = placed >= subj.periodsPerWeek;
+                        return (
+                          <span
+                            key={subj.name}
+                            className={
+                              done ? "text-green-400" : "text-yellow-400"
+                            }
+                          >
+                            {subj.name}: {placed}/{subj.periodsPerWeek}
+                            {done ? " ✓" : ""}
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab(2)}
+                        className="px-5 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl text-sm font-medium transition-colors"
+                      >
+                        ← Teachers
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => saveMutation.mutate()}
+                        disabled={saveMutation.isPending}
+                        className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 text-white rounded-xl text-sm font-bold transition-colors flex items-center gap-2"
+                      >
+                        {saveMutation.isPending ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Saving...
+                          </>
+                        ) : (
+                          <>
+                            <Save className="w-4 h-4" />
+                            Save Timetable
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
