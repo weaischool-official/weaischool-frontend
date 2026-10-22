@@ -181,8 +181,8 @@ export default function TimetablePage() {
   // ── Tab 1: Subjects ──
   const [subjects, setSubjects] = useState<SubjectConfig[]>([]);
   const [newSubjName, setNewSubjName] = useState("");
-  const [newSubjPeriods, setNewSubjPeriods] = useState(4);
-  const [showSuggestions, setShowSuggestions] = useState(false); // NEW STATE FOR DROPDOWN
+  const [newSubjPeriods, setNewSubjPeriods] = useState(1); // Default to 1 period/day
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   // ── Tab 3: Grid ──
   const [grid, setGrid] = useState<(GridCell | null)[][]>(emptyGrid());
@@ -381,7 +381,7 @@ export default function TimetablePage() {
     [subjects]
   );
 
-  // UPDATED to accept optional explicitName from dropdown clicks
+  // Convert Periods/Day input to weekly target (Periods/Day * 6 days)
   const addSubject = useCallback((explicitName?: string) => {
     const name = (typeof explicitName === "string" ? explicitName : newSubjName).trim();
     if (!name) return;
@@ -389,7 +389,9 @@ export default function TimetablePage() {
       toast.error("Subject already exists");
       return;
     }
-    if (totalPeriodsUsed + newSubjPeriods > TOTAL_SLOTS) {
+
+    const weeklyTarget = newSubjPeriods * DAYS.length; // e.g. 1 per day * 6 days = 6 per week
+    if (totalPeriodsUsed + weeklyTarget > TOTAL_SLOTS) {
       toast.error(`Not enough slots. ${TOTAL_SLOTS - totalPeriodsUsed} remaining.`);
       return;
     }
@@ -399,7 +401,7 @@ export default function TimetablePage() {
       ...prev,
       {
         name,
-        periodsPerWeek: newSubjPeriods,
+        periodsPerWeek: weeklyTarget,
         color: color.bg,
         colorIndex: cIdx,
         teacherId: "",
@@ -407,9 +409,9 @@ export default function TimetablePage() {
       },
     ]);
     setNewSubjName("");
-    setNewSubjPeriods(4);
-    setShowSuggestions(false); // Hide dropdown on add
-    toast.success(`Subject "${name}" added`);
+    setNewSubjPeriods(1);
+    setShowSuggestions(false);
+    toast.success(`Subject "${name}" added (${newSubjPeriods} period/day)`);
   }, [newSubjName, newSubjPeriods, subjects, totalPeriodsUsed]);
 
   const removeSubject = useCallback(
@@ -501,7 +503,7 @@ export default function TimetablePage() {
     return counts;
   }, [grid]);
 
-  // NEW: Filter suggestions based on typed input
+  // Filter suggestions based on typed input
   const filteredSuggestions = useMemo(() => {
     if (!newSubjName.trim()) return [];
     return COMMON_SUBJECTS.filter(
@@ -677,7 +679,6 @@ export default function TimetablePage() {
                   Add Subject
                 </h3>
                 
-                {/* UPDATED: Input with Suggestions Wrapper */}
                 <div className="flex flex-col sm:flex-row gap-3">
                   <div className="flex-1 relative">
                     <input
@@ -701,7 +702,7 @@ export default function TimetablePage() {
                           <button
                             key={s}
                             type="button"
-                            onClick={() => addSubject(s)} // Directly adds on click
+                            onClick={() => addSubject(s)}
                             className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center justify-between group"
                           >
                             <span>{s}</span>
@@ -716,7 +717,7 @@ export default function TimetablePage() {
 
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-gray-400 whitespace-nowrap">
-                      Periods/Week:
+                      Periods/Day:
                     </label>
                     <select
                       value={newSubjPeriods}
@@ -725,7 +726,7 @@ export default function TimetablePage() {
                       }
                       className="px-3 py-3 bg-gray-950 border border-gray-800 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
-                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                      {[1, 2, 3, 4].map((n) => (
                         <option key={n} value={n}>
                           {n}
                         </option>
@@ -779,6 +780,7 @@ export default function TimetablePage() {
                   {subjects.map((subj) => {
                     const c = SUBJECT_COLORS[subj.colorIndex];
                     const placed = gridSubjectCounts[subj.name] || 0;
+                    const periodsPerDay = Math.round((subj.periodsPerWeek / DAYS.length) * 10) / 10;
                     return (
                       <div
                         key={subj.name}
@@ -793,7 +795,7 @@ export default function TimetablePage() {
                               {subj.name}
                             </p>
                             <p className="text-xs text-gray-400">
-                              Target: {subj.periodsPerWeek}/week · Placed:{" "}
+                              Target: {periodsPerDay}/day ({subj.periodsPerWeek}/wk) · Placed:{" "}
                               <span
                                 className={
                                   placed >= subj.periodsPerWeek
