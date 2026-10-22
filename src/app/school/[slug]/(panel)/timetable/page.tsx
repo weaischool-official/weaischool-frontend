@@ -88,108 +88,6 @@ const PERIODS = [
   { id: 8, name: "Period 8", time: "01:45 - 02:30" }
 ];
 
-// Complete Active Classes Schema matching Classes Page
-const DEFAULT_FULL_CLASSES: ClassItem[] = [
-  {
-    id: "cls_10",
-    name: "Class 10",
-    sections: [
-      { id: "sec_10_a", name: "Section A" },
-      { id: "sec_10_b", name: "Section B" },
-      { id: "sec_10_c", name: "Section C" }
-    ]
-  },
-  {
-    id: "cls_1",
-    name: "Class 1",
-    sections: [
-      { id: "sec_1_a", name: "Section A" },
-      { id: "sec_1_b", name: "Section B" }
-    ]
-  },
-  {
-    id: "cls_2",
-    name: "Class 2",
-    sections: [
-      { id: "sec_2_a", name: "Section A" },
-      { id: "sec_2_b", name: "Section B" }
-    ]
-  },
-  {
-    id: "cls_3",
-    name: "Class 3",
-    sections: [
-      { id: "sec_3_a", name: "Section A" },
-      { id: "sec_3_b", name: "Section B" }
-    ]
-  },
-  {
-    id: "cls_4",
-    name: "Class 4",
-    sections: [
-      { id: "sec_4_a", name: "Section A" },
-      { id: "sec_4_b", name: "Section B" }
-    ]
-  },
-  {
-    id: "cls_5",
-    name: "Class 5",
-    sections: [
-      { id: "sec_5_a", name: "Section A" },
-      { id: "sec_5_b", name: "Section B" }
-    ]
-  },
-  {
-    id: "cls_6",
-    name: "Class 6",
-    sections: [
-      { id: "sec_6_a", name: "Section A" },
-      { id: "sec_6_b", name: "Section B" }
-    ]
-  },
-  {
-    id: "cls_7",
-    name: "Class 7",
-    sections: [
-      { id: "sec_7_a", name: "Section A" },
-      { id: "sec_7_b", name: "Section B" }
-    ]
-  },
-  {
-    id: "cls_8",
-    name: "Class 8",
-    sections: [
-      { id: "sec_8_a", name: "Section A" },
-      { id: "sec_8_b", name: "Section B" }
-    ]
-  },
-  {
-    id: "cls_9",
-    name: "Class 9",
-    sections: [
-      { id: "sec_9_a", name: "Section A" },
-      { id: "sec_9_b", name: "Section B" },
-      { id: "sec_9_c", name: "Section C" }
-    ]
-  },
-  {
-    id: "cls_11",
-    name: "Class 11",
-    sections: [
-      { id: "sec_11_a", name: "Section A" },
-      { id: "sec_11_b", name: "Section B" }
-    ]
-  },
-  {
-    id: "cls_12",
-    name: "Class 12",
-    sections: [
-      { id: "sec_12_a", name: "Section A" },
-      { id: "sec_12_b", name: "Section B" }
-    ]
-  }
-];
-
 // --- Helper Utilities ---
 function getAuthToken(): string {
   if (typeof window === "undefined") return "";
@@ -224,7 +122,8 @@ function getSlugFromUrl(): string {
   return "ppps";
 }
 
-function normalizeClasses(rawList: any[]): ClassItem[] {
+// Strictly Map Real Database Classes and Real Sections (No Fake Generation)
+function normalizeClassesFromDb(rawList: any[]): ClassItem[] {
   if (!Array.isArray(rawList)) return [];
 
   return rawList.map((item, idx) => {
@@ -237,6 +136,7 @@ function normalizeClasses(rawList: any[]): ClassItem[] {
       item.title ||
       `Class ${idx + 1}`;
 
+    // Read real sections array from backend/database
     let rawSecs =
       item.sections ||
       item.class_sections ||
@@ -256,21 +156,15 @@ function normalizeClasses(rawList: any[]): ClassItem[] {
         }
         return {
           id: String(s.id || s._id || s.section_id || `sec_${sIdx + 1}`),
-          name: s.name || s.section_name || s.title || `Section ${String.fromCharCode(65 + sIdx)}`
+          name: s.name || s.section_name || s.title || `Section ${s.section_number || String.fromCharCode(65 + sIdx)}`
         };
       });
-    } else {
-      parsedSecs = [
-        { id: `sec_${classId}_a`, name: "Section A" },
-        { id: `sec_${classId}_b`, name: "Section B" },
-        { id: `sec_${classId}_c`, name: "Section C" }
-      ];
     }
 
     return {
       id: classId,
       name: className,
-      sections: parsedSecs
+      sections: parsedSecs // Strictly match exact DB sections
     };
   });
 }
@@ -294,7 +188,89 @@ function scanLocalStorageForClasses(): ClassItem[] {
           (Array.isArray(parsed) ? parsed : null);
 
         if (Array.isArray(candidateList) && candidateList.length > 0) {
-          const normalized = normalizeClasses(candidateList);
+          const normalized = normalizeClassesFromDb(candidateList);
+          if (normalized.length > 0) return normalized;
+        }
+      }
+    }
+  } catch {}
+  return [];
+}
+
+// Staff Data Normalizer
+function normalizeTeachers(rawStaff: any[]): Teacher[] {
+  if (!Array.isArray(rawStaff)) return [];
+
+  return rawStaff.map((item, idx) => {
+    const id = String(item.id || item._id || item.staff_id || `teacher_${idx + 1}`);
+
+    const name =
+      item.full_name ||
+      item.name ||
+      `${item.first_name || ""} ${item.last_name || ""}`.trim() ||
+      `Teacher ${idx + 1}`;
+
+    const designation =
+      item.designation ||
+      item.role ||
+      item.job_title ||
+      "Faculty Member";
+
+    const department =
+      item.department ||
+      item.dept ||
+      item.specialization ||
+      "Academics";
+
+    let assignedSubjects: string[] = [];
+    if (Array.isArray(item.subjects) && item.subjects.length > 0) {
+      assignedSubjects = item.subjects.map((s: any) => typeof s === "string" ? s : s.name || String(s));
+    } else if (Array.isArray(item.assigned_subjects) && item.assigned_subjects.length > 0) {
+      assignedSubjects = item.assigned_subjects.map((s: any) => typeof s === "string" ? s : s.name || String(s));
+    } else if (typeof item.subject === "string" && item.subject.trim().length > 0) {
+      assignedSubjects = [item.subject.trim()];
+    } else if (typeof item.specialization === "string" && item.specialization.trim().length > 0) {
+      assignedSubjects = [item.specialization.trim()];
+    } else {
+      assignedSubjects = ["General"];
+    }
+
+    const maxPeriodsPerWeek = Number(item.max_periods_per_week || item.max_periods || 28);
+    const assignedPeriodsCount = Number(item.assigned_periods_count || item.assigned_periods || 0);
+
+    return {
+      id,
+      name,
+      designation,
+      department,
+      assignedSubjects,
+      maxPeriodsPerWeek,
+      assignedPeriodsCount
+    };
+  });
+}
+
+function scanLocalStorageForStaff(): Teacher[] {
+  if (typeof window === "undefined") return [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      const lowerKey = key.toLowerCase();
+      if (lowerKey.includes("staff") || lowerKey.includes("teacher") || lowerKey.includes("faculty")) {
+        const val = localStorage.getItem(key);
+        if (!val) continue;
+        const parsed = JSON.parse(val);
+        const candidateList =
+          parsed?.items ||
+          parsed?.data ||
+          parsed?.staff ||
+          parsed?.teachers ||
+          parsed?.state?.staff ||
+          (Array.isArray(parsed) ? parsed : null);
+
+        if (Array.isArray(candidateList) && candidateList.length > 0) {
+          const normalized = normalizeTeachers(candidateList);
           if (normalized.length > 0) return normalized;
         }
       }
@@ -306,10 +282,10 @@ function scanLocalStorageForClasses(): ClassItem[] {
 export default function TimetablePage() {
   const [activeTab, setActiveTab] = useState<"subjects" | "teachers" | "grid">("subjects");
 
-  // Immediate Load with Full 12 Classes (Class 10, Class 1, etc.)
-  const [classes, setClasses] = useState<ClassItem[]>(DEFAULT_FULL_CLASSES);
-  const [selectedClassId, setSelectedClassId] = useState<string>(DEFAULT_FULL_CLASSES[0].id);
-  const [selectedSectionId, setSelectedSectionId] = useState<string>(DEFAULT_FULL_CLASSES[0].sections[0].id);
+  // Dynamic Class States initialized empty (no hardcoding)
+  const [classes, setClasses] = useState<ClassItem[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState<string>("");
+  const [selectedSectionId, setSelectedSectionId] = useState<string>("");
 
   const [configuredSubjects, setConfiguredSubjects] = useState<Subject[]>([]);
   const [customSubjectInput, setCustomSubjectInput] = useState<string>("");
@@ -317,7 +293,8 @@ export default function TimetablePage() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [gridData, setGridData] = useState<Record<string, CellData>>({});
 
-  const [isLoadingClasses, setIsLoadingClasses] = useState<boolean>(false);
+  const [isLoadingClasses, setIsLoadingClasses] = useState<boolean>(true);
+  const [isLoadingTeachers, setIsLoadingTeachers] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
 
@@ -332,17 +309,23 @@ export default function TimetablePage() {
     }, 4000);
   }, []);
 
-  // Background Class Fetch & Sync Engine
+  // Fetch Classes strictly from Database / Classes Page
   const loadClasses = useCallback(async () => {
     setIsLoadingClasses(true);
 
-    // 1. Try local storage scanning
+    // 1. Try scanning local cache from Classes page
     const localClasses = scanLocalStorageForClasses();
     if (localClasses.length > 0) {
       setClasses(localClasses);
+      if (!selectedClassId && localClasses.length > 0) {
+        setSelectedClassId(localClasses[0].id);
+        if (localClasses[0].sections.length > 0) {
+          setSelectedSectionId(localClasses[0].sections[0].id);
+        }
+      }
     }
 
-    // 2. Query Backend Endpoints
+    // 2. Fetch Live Classes from Backend
     const baseUrl = "https://weaischool-backend.onrender.com";
     const token = getAuthToken();
     const headers: Record<string, string> = {
@@ -378,7 +361,7 @@ export default function TimetablePage() {
           (Array.isArray(json) ? json : []);
 
         if (Array.isArray(rawList) && rawList.length > 0) {
-          fetchedClasses = normalizeClasses(rawList);
+          fetchedClasses = normalizeClassesFromDb(rawList);
           break;
         }
       } catch (err) {}
@@ -387,17 +370,82 @@ export default function TimetablePage() {
     if (fetchedClasses.length > 0) {
       setClasses(fetchedClasses);
       localStorage.setItem(`weai_${slug}_cached_classes`, JSON.stringify(fetchedClasses));
-      showToast("Synced live classes from database", "success");
-    } else {
-      showToast("Loaded school class standards", "info");
+
+      if (!selectedClassId) {
+        setSelectedClassId(fetchedClasses[0].id);
+        if (fetchedClasses[0].sections.length > 0) {
+          setSelectedSectionId(fetchedClasses[0].sections[0].id);
+        }
+      }
+      showToast("Loaded real classes from database", "success");
+    } else if (localClasses.length === 0) {
+      showToast("No classes found. Please add classes in Classes panel.", "info");
     }
 
     setIsLoadingClasses(false);
-  }, [slug, showToast]);
+  }, [slug, selectedClassId, showToast]);
+
+  // Fetch Live Teachers from Database / Staff Module
+  const loadTeachers = useCallback(async () => {
+    setIsLoadingTeachers(true);
+
+    const cachedStaff = scanLocalStorageForStaff();
+    if (cachedStaff.length > 0) {
+      setTeachers(cachedStaff);
+    }
+
+    const baseUrl = "https://weaischool-backend.onrender.com";
+    const token = getAuthToken();
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "X-School-Slug": slug
+    };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    const staffEndpoints = [
+      `/api/v1/staff?slug=${slug}&limit=100`,
+      `/api/v1/schools/${slug}/staff`,
+      `/api/v1/staff`,
+      `/api/v1/users/staff`
+    ];
+
+    let liveTeachers: Teacher[] = [];
+
+    for (const ep of staffEndpoints) {
+      try {
+        const res = await fetch(`${baseUrl}${ep}`, { method: "GET", headers });
+        if (!res.ok) continue;
+
+        const json = await res.json();
+        const rawStaff =
+          json.data?.items ||
+          json.data ||
+          json.items ||
+          json.staff ||
+          json.result ||
+          (Array.isArray(json) ? json : []);
+
+        if (Array.isArray(rawStaff) && rawStaff.length > 0) {
+          liveTeachers = normalizeTeachers(rawStaff);
+          break;
+        }
+      } catch (err) {}
+    }
+
+    if (liveTeachers.length > 0) {
+      setTeachers(liveTeachers);
+      localStorage.setItem(`weai_${slug}_cached_staff`, JSON.stringify(liveTeachers));
+    }
+
+    setIsLoadingTeachers(false);
+  }, [slug]);
 
   useEffect(() => {
     loadClasses();
-  }, [loadClasses]);
+    loadTeachers();
+  }, [loadClasses, loadTeachers]);
 
   // Derived Active Class & Section
   const currentClass = useMemo(() => {
@@ -405,25 +453,30 @@ export default function TimetablePage() {
   }, [classes, selectedClassId]);
 
   const currentSection = useMemo(() => {
-    if (!currentClass) return null;
+    if (!currentClass || !currentClass.sections) return null;
     return currentClass.sections.find((s) => s.id === selectedSectionId) || currentClass.sections[0] || null;
   }, [currentClass, selectedSectionId]);
 
-  // Auto Select First Section when Class changes
+  // Auto Select Section when Class changes
   useEffect(() => {
-    if (currentClass && currentClass.sections.length > 0) {
-      const exists = currentClass.sections.some((s) => s.id === selectedSectionId);
-      if (!exists) {
-        setSelectedSectionId(currentClass.sections[0].id);
+    if (currentClass) {
+      if (currentClass.sections && currentClass.sections.length > 0) {
+        const exists = currentClass.sections.some((s) => s.id === selectedSectionId);
+        if (!exists) {
+          setSelectedSectionId(currentClass.sections[0].id);
+        }
+      } else {
+        setSelectedSectionId("");
       }
     }
   }, [currentClass, selectedSectionId]);
 
-  // Load Saved Subjects & Timetable Grid for current Class/Section
+  // Load Saved Subjects & Timetable Grid
   useEffect(() => {
-    if (!selectedClassId || !selectedSectionId) return;
+    if (!selectedClassId) return;
 
-    const subKey = `weai_${slug}_subjects_${selectedClassId}_${selectedSectionId}`;
+    const secKeyPart = selectedSectionId || "no_sec";
+    const subKey = `weai_${slug}_subjects_${selectedClassId}_${secKeyPart}`;
     const savedSubs = localStorage.getItem(subKey);
     if (savedSubs) {
       try {
@@ -441,7 +494,7 @@ export default function TimetablePage() {
       ]);
     }
 
-    const gridKey = `weai_${slug}_grid_${selectedClassId}_${selectedSectionId}`;
+    const gridKey = `weai_${slug}_grid_${selectedClassId}_${secKeyPart}`;
     const savedGrid = localStorage.getItem(gridKey);
     if (savedGrid) {
       try {
@@ -456,8 +509,9 @@ export default function TimetablePage() {
 
   const saveSubjects = (subs: Subject[]) => {
     setConfiguredSubjects(subs);
-    if (selectedClassId && selectedSectionId) {
-      localStorage.setItem(`weai_${slug}_subjects_${selectedClassId}_${selectedSectionId}`, JSON.stringify(subs));
+    if (selectedClassId) {
+      const secKeyPart = selectedSectionId || "no_sec";
+      localStorage.setItem(`weai_${slug}_subjects_${selectedClassId}_${secKeyPart}`, JSON.stringify(subs));
     }
   };
 
@@ -501,16 +555,6 @@ export default function TimetablePage() {
     showToast(`Removed ${target?.name || "subject"}`, "info");
   };
 
-  // Setup Sample Faculty List
-  useEffect(() => {
-    setTeachers([
-      { id: "t_1", name: "Dr. Rajesh Sharma", designation: "Senior PGT", department: "Mathematics", assignedSubjects: ["Mathematics", "Physics"], maxPeriodsPerWeek: 28, assignedPeriodsCount: 18 },
-      { id: "t_2", name: "Mrs. Ananya Gupta", designation: "TGT Teacher", department: "Science", assignedSubjects: ["Science", "Chemistry", "Biology"], maxPeriodsPerWeek: 26, assignedPeriodsCount: 20 },
-      { id: "t_3", name: "Mr. Vikram Singh", designation: "PGT Humanities", department: "Social Science", assignedSubjects: ["Social Science", "Hindi"], maxPeriodsPerWeek: 25, assignedPeriodsCount: 15 },
-      { id: "t_4", name: "Ms. Priya Verma", designation: "Language Specialist", department: "English", assignedSubjects: ["English"], maxPeriodsPerWeek: 24, assignedPeriodsCount: 12 }
-    ]);
-  }, []);
-
   const handleAssignToGrid = (dayIndex: number, periodId: number, subject: Subject) => {
     const cellKey = `${dayIndex}_${periodId}`;
     const newGrid = {
@@ -521,8 +565,9 @@ export default function TimetablePage() {
       }
     };
     setGridData(newGrid);
-    if (selectedClassId && selectedSectionId) {
-      localStorage.setItem(`weai_${slug}_grid_${selectedClassId}_${selectedSectionId}`, JSON.stringify(newGrid));
+    if (selectedClassId) {
+      const secKeyPart = selectedSectionId || "no_sec";
+      localStorage.setItem(`weai_${slug}_grid_${selectedClassId}_${secKeyPart}`, JSON.stringify(newGrid));
     }
   };
 
@@ -531,14 +576,16 @@ export default function TimetablePage() {
     const newGrid = { ...gridData };
     delete newGrid[cellKey];
     setGridData(newGrid);
-    if (selectedClassId && selectedSectionId) {
-      localStorage.setItem(`weai_${slug}_grid_${selectedClassId}_${selectedSectionId}`, JSON.stringify(newGrid));
+    if (selectedClassId) {
+      const secKeyPart = selectedSectionId || "no_sec";
+      localStorage.setItem(`weai_${slug}_grid_${selectedClassId}_${secKeyPart}`, JSON.stringify(newGrid));
     }
   };
 
   const handleSaveAll = async () => {
     setIsSaving(true);
-    const gridKey = `weai_${slug}_grid_${selectedClassId}_${selectedSectionId}`;
+    const secKeyPart = selectedSectionId || "no_sec";
+    const gridKey = `weai_${slug}_grid_${selectedClassId}_${secKeyPart}`;
     localStorage.setItem(gridKey, JSON.stringify(gridData));
 
     const token = getAuthToken();
@@ -598,7 +645,7 @@ export default function TimetablePage() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-white flex items-center gap-3">
               Smart Timetable Builder
-              {isLoadingClasses && <RefreshCw className="w-5 h-5 text-blue-400 animate-spin" />}
+              {(isLoadingClasses || isLoadingTeachers) && <RefreshCw className="w-5 h-5 text-blue-400 animate-spin" />}
             </h1>
             <p className="text-gray-400 text-sm mt-1">
               Setup section-wise subjects, assign teachers, and build schedules.
@@ -607,12 +654,15 @@ export default function TimetablePage() {
 
           <div className="flex items-center gap-3">
             <button
-              onClick={loadClasses}
+              onClick={() => {
+                loadClasses();
+                loadTeachers();
+              }}
               className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm font-medium border border-gray-700 flex items-center gap-2 transition"
-              title="Sync classes"
+              title="Sync Data"
             >
-              <RefreshCw className={`w-4 h-4 ${isLoadingClasses ? "animate-spin" : ""}`} />
-              Sync Classes
+              <RefreshCw className={`w-4 h-4 ${(isLoadingClasses || isLoadingTeachers) ? "animate-spin" : ""}`} />
+              Sync Data
             </button>
 
             <button
@@ -665,7 +715,7 @@ export default function TimetablePage() {
           </button>
         </div>
 
-        {/* Class & Section Selection Panel */}
+        {/* Class & Section Selection Panel (Dynamic DB values) */}
         <div className="bg-gray-900/90 border border-gray-800 rounded-xl p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">
@@ -678,17 +728,23 @@ export default function TimetablePage() {
                   const newId = e.target.value;
                   setSelectedClassId(newId);
                   const cls = classes.find((c) => c.id === newId);
-                  if (cls && cls.sections.length > 0) {
+                  if (cls && cls.sections && cls.sections.length > 0) {
                     setSelectedSectionId(cls.sections[0].id);
+                  } else {
+                    setSelectedSectionId("");
                   }
                 }}
                 className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg px-4 py-2.5 text-sm appearance-none focus:outline-none focus:border-blue-500 transition cursor-pointer"
               >
-                {classes.map((cls) => (
-                  <option key={cls.id} value={cls.id}>
-                    {cls.name}
-                  </option>
-                ))}
+                {classes.length === 0 ? (
+                  <option value="">Loading classes from database...</option>
+                ) : (
+                  classes.map((cls) => (
+                    <option key={cls.id} value={cls.id}>
+                      {cls.name}
+                    </option>
+                  ))
+                )}
               </select>
               <ChevronDown className="w-4 h-4 text-gray-400 absolute right-3 top-3.5 pointer-events-none" />
             </div>
@@ -702,14 +758,18 @@ export default function TimetablePage() {
               <select
                 value={selectedSectionId}
                 onChange={(e) => setSelectedSectionId(e.target.value)}
-                disabled={!currentClass || currentClass.sections.length === 0}
+                disabled={!currentClass || !currentClass.sections || currentClass.sections.length === 0}
                 className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg px-4 py-2.5 text-sm appearance-none focus:outline-none focus:border-blue-500 transition disabled:opacity-50 cursor-pointer"
               >
-                {currentClass?.sections.map((sec) => (
-                  <option key={sec.id} value={sec.id}>
-                    {sec.name}
-                  </option>
-                ))}
+                {!currentClass || !currentClass.sections || currentClass.sections.length === 0 ? (
+                  <option value="">No sections created for this class</option>
+                ) : (
+                  currentClass.sections.map((sec) => (
+                    <option key={sec.id} value={sec.id}>
+                      {sec.name}
+                    </option>
+                  ))
+                )}
               </select>
               <ChevronDown className="w-4 h-4 text-gray-400 absolute right-3 top-3.5 pointer-events-none" />
             </div>
@@ -778,7 +838,7 @@ export default function TimetablePage() {
               <div className="flex items-center justify-between border-b border-gray-800 pb-3">
                 <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                   <BookOpen className="w-5 h-5 text-blue-400" />
-                  Configured Subjects for {currentClass?.name} - {currentSection?.name}
+                  Configured Subjects for {currentClass?.name || "Class"} {currentSection ? `- ${currentSection.name}` : ""}
                 </h3>
                 <span className="px-2.5 py-1 bg-blue-950 text-blue-300 text-xs font-semibold rounded-full border border-blue-800">
                   Total Weekly Periods: {totalWeeklyPeriods}
@@ -850,66 +910,77 @@ export default function TimetablePage() {
                   Faculty & Subject Assignments
                 </h3>
                 <p className="text-xs text-gray-400 mt-1">
-                  Manage workload distribution and subject mapping for faculty members.
+                  Live staff database & subject workload distribution.
                 </p>
               </div>
+              <span className="text-xs px-3 py-1 bg-gray-800 text-gray-300 rounded-lg border border-gray-700 font-mono">
+                Total Faculty: {teachers.length}
+              </span>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {teachers.map((teacher) => {
-                const percentage = Math.round((teacher.assignedPeriodsCount / teacher.maxPeriodsPerWeek) * 100);
-                return (
-                  <div
-                    key={teacher.id}
-                    className="bg-gray-950 border border-gray-800 rounded-xl p-4 space-y-3 hover:border-gray-700 transition"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h4 className="font-semibold text-white text-base flex items-center gap-2">
-                          <UserCheck className="w-4 h-4 text-emerald-400" />
-                          {teacher.name}
-                        </h4>
-                        <p className="text-xs text-gray-400">{teacher.designation} • {teacher.department}</p>
+            {teachers.length === 0 ? (
+              <div className="py-12 text-center text-gray-500 border border-dashed border-gray-800 rounded-xl">
+                <Users className="w-10 h-10 mx-auto text-gray-600 mb-2" />
+                <p className="text-sm font-medium text-gray-300">No teachers found in database for this school</p>
+                <p className="text-xs text-gray-500 mt-1">Please add staff members in the Staff management section.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {teachers.map((teacher) => {
+                  const percentage = Math.round((teacher.assignedPeriodsCount / teacher.maxPeriodsPerWeek) * 100);
+                  return (
+                    <div
+                      key={teacher.id}
+                      className="bg-gray-950 border border-gray-800 rounded-xl p-4 space-y-3 hover:border-gray-700 transition"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <h4 className="font-semibold text-white text-base flex items-center gap-2">
+                            <UserCheck className="w-4 h-4 text-emerald-400" />
+                            {teacher.name}
+                          </h4>
+                          <p className="text-xs text-gray-400">{teacher.designation} • {teacher.department}</p>
+                        </div>
+                        <span className="text-xs px-2.5 py-1 bg-gray-900 border border-gray-800 text-gray-300 rounded-full font-mono">
+                          {teacher.assignedPeriodsCount} / {teacher.maxPeriodsPerWeek} periods
+                        </span>
                       </div>
-                      <span className="text-xs px-2.5 py-1 bg-gray-900 border border-gray-800 text-gray-300 rounded-full font-mono">
-                        {teacher.assignedPeriodsCount} / {teacher.maxPeriodsPerWeek} periods
-                      </span>
-                    </div>
 
-                    <div className="space-y-1">
-                      <div className="w-full bg-gray-900 h-2 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full transition-all ${
-                            percentage > 90 ? "bg-rose-500" : percentage > 75 ? "bg-yellow-500" : "bg-blue-500"
-                          }`}
-                          style={{ width: `${Math.min(100, percentage)}%` }}
-                        />
+                      <div className="space-y-1">
+                        <div className="w-full bg-gray-900 h-2 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full transition-all ${
+                              percentage > 90 ? "bg-rose-500" : percentage > 75 ? "bg-yellow-500" : "bg-blue-500"
+                            }`}
+                            style={{ width: `${Math.min(100, Math.max(5, percentage))}%` }}
+                          />
+                        </div>
+                        <div className="flex justify-between text-[10px] text-gray-500">
+                          <span>Workload: {percentage}%</span>
+                          <span>Max Cap: {teacher.maxPeriodsPerWeek}</span>
+                        </div>
                       </div>
-                      <div className="flex justify-between text-[10px] text-gray-500">
-                        <span>Workload: {percentage}%</span>
-                        <span>Max Cap: {teacher.maxPeriodsPerWeek}</span>
-                      </div>
-                    </div>
 
-                    <div className="pt-1">
-                      <span className="text-[11px] text-gray-400 uppercase tracking-wider block mb-1">
-                        ASSIGNED SUBJECTS
-                      </span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {teacher.assignedSubjects.map((sub) => (
-                          <span
-                            key={sub}
-                            className="px-2 py-0.5 bg-blue-950/60 border border-blue-800/60 text-blue-300 text-xs rounded-md"
-                          >
-                            {sub}
-                          </span>
-                        ))}
+                      <div className="pt-1">
+                        <span className="text-[11px] text-gray-400 uppercase tracking-wider block mb-1">
+                          ASSIGNED SUBJECTS / SPECIALIZATION
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {teacher.assignedSubjects.map((sub) => (
+                            <span
+                              key={sub}
+                              className="px-2 py-0.5 bg-blue-950/60 border border-blue-800/60 text-blue-300 text-xs rounded-md"
+                            >
+                              {sub}
+                            </span>
+                          ))}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
