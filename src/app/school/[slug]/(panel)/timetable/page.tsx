@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { useParams } from "next/navigation";
-import { api } from "@/lib/api";
 import {
   BookOpen,
   Users,
@@ -18,7 +17,9 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
-// Helper: Extract school slug from URL path (e.g. /school/ppps/timetable -> ppps)
+// --- ZERO-DEPENDENCY INTERNAL API & TOAST ENGINE ---
+const API_BASE_URL = "https://weaischool-backend.onrender.com/api/v1";
+
 const getSlugFromUrl = (): string => {
   if (typeof window === "undefined") return "ppps";
   const pathParts = window.location.pathname.split("/");
@@ -29,7 +30,6 @@ const getSlugFromUrl = (): string => {
   return "ppps";
 };
 
-// Helper: Deep JWT token extraction from localStorage and cookies
 const getAuthToken = (): string => {
   if (typeof window === "undefined") return "";
 
@@ -87,7 +87,6 @@ const getAuthToken = (): string => {
   return "";
 };
 
-// Helper: Safely extract array list from dynamic API responses
 const extractArray = (resData: any): any[] => {
   if (!resData) return [];
   if (Array.isArray(resData)) return resData;
@@ -102,15 +101,20 @@ const extractArray = (resData: any): any[] => {
   return [];
 };
 
-// Direct fetch engine with retries for Render cold starts
-const directFetchWithRetry = async (endpoint: string, retries = 5, delayMs = 2000): Promise<any> => {
-  const API_BASE_URL = "https://weaischool-backend.onrender.com/api/v1";
+const requestWithRetry = async (
+  endpoint: string,
+  options: RequestInit = {},
+  retries = 5,
+  delayMs = 1800
+) => {
   const token = getAuthToken();
   const slug = getSlugFromUrl();
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...((options.headers as Record<string, string>) || {}),
   };
+
   if (token) headers["Authorization"] = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
   if (slug) headers["X-School-Slug"] = slug;
 
@@ -119,49 +123,53 @@ const directFetchWithRetry = async (endpoint: string, retries = 5, delayMs = 200
 
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const res = await fetch(url, { method: "GET", headers });
+      const res = await fetch(url, { ...options, headers });
       if (res.ok) {
-        if (res.status === 204) return [];
-        return await res.json();
+        if (res.status === 204) return { data: [] };
+        const data = await res.json();
+        return { data };
       }
-      if (attempt === retries) return null;
+      if (res.status === 404 || res.status === 401) {
+        if (attempt < retries) {
+          await new Promise((r) => setTimeout(r, 1000));
+          continue;
+        }
+      }
+      if (attempt === retries) {
+        const errData = await res.json().catch(() => ({}));
+        const err: any = new Error(`Request failed with status ${res.status}`);
+        err.response = { status: res.status, data: errData };
+        throw err;
+      }
     } catch (err) {
-      if (attempt === retries) return null;
+      if (attempt === retries) throw err;
+      await new Promise((r) => setTimeout(r, delayMs * attempt));
     }
-    await new Promise((r) => setTimeout(r, delayMs * attempt));
   }
-  return null;
+  return { data: [] };
 };
 
-// Universal endpoint fetcher that handles both @/lib/api and direct fetch fallbacks
+const api = {
+  get: (url: string) => requestWithRetry(url, { method: "GET" }),
+  post: (url: string, body?: any) =>
+    requestWithRetry(url, { method: "POST", body: JSON.stringify(body) }),
+  patch: (url: string, body?: any) =>
+    requestWithRetry(url, { method: "PATCH", body: JSON.stringify(body) }),
+  delete: (url: string) => requestWithRetry(url, { method: "DELETE" }),
+};
+
 const fetchWithFallbacks = async (endpoints: string[]): Promise<any[]> => {
-  // 1. Try @/lib/api first
   for (const ep of endpoints) {
     try {
       const res = await api.get(ep);
       const raw = res?.data !== undefined ? res.data : res;
       const list = extractArray(raw);
       if (list.length > 0) return list;
-    } catch (e) {
-      // try next
-    }
+    } catch (e) {}
   }
-
-  // 2. Fallback to direct fetch engine with Render wake-up handling
-  for (const ep of endpoints) {
-    try {
-      const raw = await directFetchWithRetry(ep);
-      const list = extractArray(raw);
-      if (list.length > 0) return list;
-    } catch (e) {
-      // try next
-    }
-  }
-
   return [];
 };
 
-// Zero-dependency Toast Controller
 let toastListener: ((msg: string, type: "success" | "error" | "warning" | "info") => void) | null = null;
 const toast = {
   success: (msg: string) => toastListener && toastListener(msg, "success"),
@@ -170,6 +178,7 @@ const toast = {
   info: (msg: string) => toastListener && toastListener(msg, "info"),
 };
 
+// --- DATA & CONSTANTS ---
 const QUICK_SUBJECTS = [
   { name: "Mathematics", color: "#3B82F6" },
   { name: "English", color: "#10B981" },
@@ -337,7 +346,7 @@ export default function TimetableBuilderPage() {
   const [gridData, setGridData] = useState<Record<string, any>>({});
   const [isSavingGrid, setIsSavingGrid] = useState(false);
 
-  // Toast State
+  // Toast Banner State
   const [toastBanner, setToastBanner] = useState<{
     msg: string;
     type: "success" | "error" | "warning" | "info";
