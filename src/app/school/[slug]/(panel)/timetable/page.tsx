@@ -105,19 +105,20 @@ const COMMON_SUBJECTS = [
   "Business Studies", "Environmental Studies", "General Knowledge"
 ];
 
+// CHANGED: Made colors significantly darker and text white for better visibility
 const SUBJECT_COLORS = [
-  { bg: "bg-blue-500", text: "text-blue-400", light: "bg-blue-500/15", border: "border-blue-500/30" },
-  { bg: "bg-purple-500", text: "text-purple-400", light: "bg-purple-500/15", border: "border-purple-500/30" },
-  { bg: "bg-green-500", text: "text-green-400", light: "bg-green-500/15", border: "border-green-500/30" },
-  { bg: "bg-yellow-500", text: "text-yellow-400", light: "bg-yellow-500/15", border: "border-yellow-500/30" },
-  { bg: "bg-red-500", text: "text-red-400", light: "bg-red-500/15", border: "border-red-500/30" },
-  { bg: "bg-pink-500", text: "text-pink-400", light: "bg-pink-500/15", border: "border-pink-500/30" },
-  { bg: "bg-indigo-500", text: "text-indigo-400", light: "bg-indigo-500/15", border: "border-indigo-500/30" },
-  { bg: "bg-teal-500", text: "text-teal-400", light: "bg-teal-500/15", border: "border-teal-500/30" },
-  { bg: "bg-orange-500", text: "text-orange-400", light: "bg-orange-500/15", border: "border-orange-500/30" },
-  { bg: "bg-cyan-500", text: "text-cyan-400", light: "bg-cyan-500/15", border: "border-cyan-500/30" },
-  { bg: "bg-emerald-500", text: "text-emerald-400", light: "bg-emerald-500/15", border: "border-emerald-500/30" },
-  { bg: "bg-rose-500", text: "text-rose-400", light: "bg-rose-500/15", border: "border-rose-500/30" },
+  { bg: "bg-blue-600", text: "text-white", light: "bg-blue-900/60", border: "border-blue-500" },
+  { bg: "bg-purple-600", text: "text-white", light: "bg-purple-900/60", border: "border-purple-500" },
+  { bg: "bg-green-600", text: "text-white", light: "bg-green-900/60", border: "border-green-500" },
+  { bg: "bg-yellow-600", text: "text-white", light: "bg-yellow-900/60", border: "border-yellow-500" },
+  { bg: "bg-red-600", text: "text-white", light: "bg-red-900/60", border: "border-red-500" },
+  { bg: "bg-pink-600", text: "text-white", light: "bg-pink-900/60", border: "border-pink-500" },
+  { bg: "bg-indigo-600", text: "text-white", light: "bg-indigo-900/60", border: "border-indigo-500" },
+  { bg: "bg-teal-600", text: "text-white", light: "bg-teal-900/60", border: "border-teal-500" },
+  { bg: "bg-orange-600", text: "text-white", light: "bg-orange-900/60", border: "border-orange-500" },
+  { bg: "bg-cyan-600", text: "text-white", light: "bg-cyan-900/60", border: "border-cyan-500" },
+  { bg: "bg-emerald-600", text: "text-white", light: "bg-emerald-900/60", border: "border-emerald-500" },
+  { bg: "bg-rose-600", text: "text-white", light: "bg-rose-900/60", border: "border-rose-500" },
 ];
 
 // ═══════════════════════════════════════════════════════════
@@ -330,7 +331,7 @@ export default function TimetablePage() {
     setSelectedSectionId("");
     setGrid(emptyGrid(numPeriods));
     setActiveCellPicker(null);
-  }, [selectedClassId]); // Removed numPeriods to prevent wipe on grid expand
+  }, [selectedClassId]); 
 
   // ═══════════════════════════════════════════════════════
   // SAVE MUTATION
@@ -376,10 +377,16 @@ export default function TimetablePage() {
         queryKey: ["timetable", selectedClassId, selectedSectionId],
       });
     },
-    onError: () => {
-      toast.error(
-        "Could not save to server. Timetable is saved in your current session."
-      );
+    onError: (err: any) => {
+      // CHANGED: Cross-class validation error handling from backend
+      const errMsg = err?.response?.data?.message || err?.response?.data?.error;
+      if (errMsg) {
+        toast.error(`Teacher Conflict: ${errMsg}`);
+      } else {
+        toast.error(
+          "Could not save to server. Please check if the teacher is already assigned in another class for these periods."
+        );
+      }
     },
   });
 
@@ -400,11 +407,9 @@ export default function TimetablePage() {
       return;
     }
 
-    // Direct input of total periods per week
     const weeklyTarget = newSubjPeriods; 
     let currentTotalSlots = DAYS.length * numPeriods;
 
-    // Expand grid automatically if we need more slots
     if (totalPeriodsUsed + weeklyTarget > currentTotalSlots) {
       const newNum = Math.ceil((totalPeriodsUsed + weeklyTarget) / DAYS.length);
       setNumPeriods(newNum);
@@ -476,8 +481,24 @@ export default function TimetablePage() {
     [allStaff]
   );
 
+  // CHANGED: Added Validation logic for "One subject per day"
   const setGridCell = useCallback(
     (day: number, period: number, subjectName: string | null) => {
+      if (subjectName) {
+        // Validation: Check if the subject is already assigned on this specific day
+        const existingPeriodIndex = grid[day].findIndex(
+          (cell) => cell?.subject.toLowerCase() === subjectName.toLowerCase()
+        );
+
+        if (existingPeriodIndex !== -1 && existingPeriodIndex !== period) {
+          toast.error(
+            `${subjectName} is already assigned on ${DAYS[day]} (Period ${existingPeriodIndex + 1}). A subject can only be assigned once per day.`
+          );
+          setActiveCellPicker(null);
+          return;
+        }
+      }
+
       setGrid((prev) => {
         const next = prev.map((r) => [...r]);
         if (!subjectName) {
@@ -497,7 +518,7 @@ export default function TimetablePage() {
       });
       setActiveCellPicker(null);
     },
-    [subjects]
+    [grid, subjects]
   );
 
   // ═══════════════════════════════════════════════════════
@@ -791,7 +812,7 @@ export default function TimetablePage() {
                       >
                         <div className="flex items-center gap-3">
                           <div
-                            className={`w-3 h-8 rounded-full ${subj.color}`}
+                            className={`w-3 h-8 rounded-full ${c.bg}`} // Adjusted to use direct bg class
                           />
                           <div>
                             <p className="text-white font-semibold text-sm">
@@ -902,7 +923,7 @@ export default function TimetablePage() {
                         >
                           <div className="flex items-center gap-3 sm:w-48 shrink-0">
                             <div
-                              className={`w-3 h-8 rounded-full ${subj.color}`}
+                              className={`w-3 h-8 rounded-full ${c.bg}`}
                             />
                             <span className="text-white font-semibold text-sm">
                               {subj.name}
@@ -1012,7 +1033,7 @@ export default function TimetablePage() {
                           >
                             <GripVertical className="w-3 h-3 text-gray-500" />
                             <div
-                              className={`w-2.5 h-2.5 rounded-full ${subj.color}`}
+                              className={`w-2.5 h-2.5 rounded-full ${c.bg}`}
                             />
                             <span className="text-xs font-semibold text-white">
                               {subj.name}
@@ -1034,7 +1055,8 @@ export default function TimetablePage() {
                       </span>
                     </div>
                   ) : (
-                    <div className="bg-gray-900/80 border border-gray-800 rounded-xl overflow-x-auto">
+                    // CHANGED: Added pb-32 to container so dropdown doesn't clip at the bottom
+                    <div className="bg-gray-900/80 border border-gray-800 rounded-xl overflow-x-auto pb-32">
                       <table className="w-full min-w-[700px] border-collapse">
                         <thead>
                           <tr>
@@ -1062,18 +1084,22 @@ export default function TimetablePage() {
                               {DAYS.map((_, di) => {
                                 const cell = grid[di][pi];
                                 const cellKey = `${di}-${pi}`;
-                                const isPickerOpen =
-                                  activeCellPicker === cellKey;
+                                const isPickerOpen = activeCellPicker === cellKey;
                                 const c = cell
                                   ? SUBJECT_COLORS.find(
                                       (sc) => sc.bg === cell.color
                                     ) || SUBJECT_COLORS[0]
                                   : null;
 
+                                // CHANGED: Dropdown positioning logic
+                                const isBottomRows = pi >= activePeriods.length - 2;
+                                const dropdownPos = isBottomRows ? "bottom-full mb-1" : "top-full mt-1";
+
                                 return (
                                   <td
                                     key={cellKey}
-                                    className="border border-gray-800/50 p-1 relative"
+                                    // CHANGED: Added dynamic z-index to bring active cell to front
+                                    className={`border border-gray-800/50 p-1 relative ${isPickerOpen ? "z-50" : "z-10"}`}
                                     onDragOver={(e) => {
                                       e.preventDefault();
                                       e.dataTransfer.dropEffect = "move";
@@ -1101,7 +1127,7 @@ export default function TimetablePage() {
                                           {cell.subject}
                                         </span>
                                         {cell.teacherName && (
-                                          <span className="text-[10px] text-gray-500 truncate w-full mt-0.5">
+                                          <span className="text-[10px] text-gray-300 truncate w-full mt-0.5">
                                             {cell.teacherName.split(" ")[0]}
                                           </span>
                                         )}
@@ -1131,8 +1157,10 @@ export default function TimetablePage() {
                                     )}
 
                                     {isPickerOpen && !cell && (
-                                      <div className="absolute top-full left-0 z-30 mt-1 w-44 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl py-1 max-h-48 overflow-y-auto">
+                                      // CHANGED: Applied dropdownPos class dynamically
+                                      <div className={`absolute ${dropdownPos} left-0 w-44 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl py-1 max-h-48 overflow-y-auto`}>
                                         {subjects.map((subj) => {
+                                          const subjColor = SUBJECT_COLORS[subj.colorIndex];
                                           return (
                                             <button
                                               key={subj.name}
@@ -1147,7 +1175,7 @@ export default function TimetablePage() {
                                               className="w-full px-3 py-2 text-left text-xs hover:bg-gray-800 flex items-center gap-2 transition-colors"
                                             >
                                               <div
-                                                className={`w-2 h-2 rounded-full ${subj.color}`}
+                                                className={`w-2 h-2 rounded-full ${subjColor.bg}`}
                                               />
                                               <span className="text-white font-medium truncate">
                                                 {subj.name}
@@ -1183,7 +1211,7 @@ export default function TimetablePage() {
                     </div>
                   )}
 
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mt-6">
                     <div className="flex flex-wrap gap-4 text-xs text-gray-400">
                       <span>
                         Filled:{" "}
