@@ -98,6 +98,15 @@ const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const PERIODS = [1, 2, 3, 4, 5, 6, 7, 8];
 const TOTAL_SLOTS = DAYS.length * PERIODS.length;
 
+// Pre-defined common subjects for suggestions
+const COMMON_SUBJECTS = [
+  "Mathematics", "English", "Hindi", "Science", "Physics", "Chemistry", 
+  "Biology", "Social Science", "History", "Geography", "Civics", "Economics", 
+  "Computer Science", "Information Technology", "Physical Education", 
+  "Art", "Music", "Sanskrit", "Marathi", "Gujarati", "Accountancy", 
+  "Business Studies", "Environmental Studies", "General Knowledge"
+];
+
 const SUBJECT_COLORS = [
   { bg: "bg-blue-500", text: "text-blue-400", light: "bg-blue-500/15", border: "border-blue-500/30" },
   { bg: "bg-purple-500", text: "text-purple-400", light: "bg-purple-500/15", border: "border-purple-500/30" },
@@ -173,6 +182,7 @@ export default function TimetablePage() {
   const [subjects, setSubjects] = useState<SubjectConfig[]>([]);
   const [newSubjName, setNewSubjName] = useState("");
   const [newSubjPeriods, setNewSubjPeriods] = useState(4);
+  const [showSuggestions, setShowSuggestions] = useState(false); // NEW STATE FOR DROPDOWN
 
   // ── Tab 3: Grid ──
   const [grid, setGrid] = useState<(GridCell | null)[][]>(emptyGrid());
@@ -371,8 +381,9 @@ export default function TimetablePage() {
     [subjects]
   );
 
-  const addSubject = useCallback(() => {
-    const name = newSubjName.trim();
+  // UPDATED to accept optional explicitName from dropdown clicks
+  const addSubject = useCallback((explicitName?: string) => {
+    const name = (typeof explicitName === "string" ? explicitName : newSubjName).trim();
     if (!name) return;
     if (subjects.some((s) => s.name.toLowerCase() === name.toLowerCase())) {
       toast.error("Subject already exists");
@@ -397,6 +408,7 @@ export default function TimetablePage() {
     ]);
     setNewSubjName("");
     setNewSubjPeriods(4);
+    setShowSuggestions(false); // Hide dropdown on add
     toast.success(`Subject "${name}" added`);
   }, [newSubjName, newSubjPeriods, subjects, totalPeriodsUsed]);
 
@@ -488,6 +500,16 @@ export default function TimetablePage() {
     }
     return counts;
   }, [grid]);
+
+  // NEW: Filter suggestions based on typed input
+  const filteredSuggestions = useMemo(() => {
+    if (!newSubjName.trim()) return [];
+    return COMMON_SUBJECTS.filter(
+      (s) =>
+        s.toLowerCase().includes(newSubjName.toLowerCase()) &&
+        !subjects.some((existing) => existing.name.toLowerCase() === s.toLowerCase())
+    );
+  }, [newSubjName, subjects]);
 
   // ═══════════════════════════════════════════════════════
   // RENDER
@@ -654,15 +676,44 @@ export default function TimetablePage() {
                   <Plus className="w-5 h-5 text-blue-400" />
                   Add Subject
                 </h3>
+                
+                {/* UPDATED: Input with Suggestions Wrapper */}
                 <div className="flex flex-col sm:flex-row gap-3">
-                  <input
-                    type="text"
-                    value={newSubjName}
-                    onChange={(e) => setNewSubjName(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && addSubject()}
-                    placeholder="e.g. Mathematics, English, Physics..."
-                    className="flex-1 px-4 py-3 bg-gray-950 border border-gray-800 rounded-xl text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                  <div className="flex-1 relative">
+                    <input
+                      type="text"
+                      value={newSubjName}
+                      onChange={(e) => {
+                        setNewSubjName(e.target.value);
+                        setShowSuggestions(true);
+                      }}
+                      onFocus={() => setShowSuggestions(true)}
+                      onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                      onKeyDown={(e) => e.key === "Enter" && addSubject()}
+                      placeholder="e.g. Mathematics, English, Physics..."
+                      className="w-full px-4 py-3 bg-gray-950 border border-gray-800 rounded-xl text-white placeholder-gray-500 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    
+                    {/* Suggestions Dropdown */}
+                    {showSuggestions && newSubjName.trim() && filteredSuggestions.length > 0 && (
+                      <div className="absolute z-20 w-full mt-1 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl py-1 max-h-48 overflow-y-auto">
+                        {filteredSuggestions.map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            onClick={() => addSubject(s)} // Directly adds on click
+                            className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors flex items-center justify-between group"
+                          >
+                            <span>{s}</span>
+                            <span className="text-[10px] text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                              Click to Add
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-gray-400 whitespace-nowrap">
                       Periods/Week:
@@ -683,7 +734,7 @@ export default function TimetablePage() {
                   </div>
                   <button
                     type="button"
-                    onClick={addSubject}
+                    onClick={() => addSubject()}
                     disabled={!newSubjName.trim()}
                     className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white rounded-xl text-sm font-bold transition-colors flex items-center justify-center gap-2"
                   >
@@ -691,6 +742,7 @@ export default function TimetablePage() {
                     Add
                   </button>
                 </div>
+
                 <div className="mt-3 flex items-center gap-4 text-xs text-gray-500">
                   <span>
                     Total periods:{" "}
