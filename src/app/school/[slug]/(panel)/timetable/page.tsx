@@ -267,14 +267,28 @@ export default function TimetablePage() {
     enabled: !!selectedClassId && !!selectedSectionId,
   });
 
+  // ── FIX: Force clear local state whenever Class OR Section dropdown changes ──
+  useEffect(() => {
+    setGrid(emptyGrid(8));
+    setNumPeriods(8);
+    setSubjects([]); // Wipe leaked subjects
+    setActiveCellPicker(null);
+  }, [selectedClassId, selectedSectionId]);
+
+  // ── Reset section when class changes ──
+  useEffect(() => {
+    setSelectedSectionId("");
+  }, [selectedClassId]); 
+
   // ── Populate grid + subjects from existing timetable ──
   useEffect(() => {
     if (!timetableRaw) return;
     const entries = extractArray(timetableRaw) as unknown as TimetableEntry[];
+    
+    // FIX: If the timetable for this section is empty, MUST clear the subjects too
     if (entries.length === 0) {
       setGrid(emptyGrid(8));
       setNumPeriods(8);
-      // FIXED: Clear subjects completely so old sections data doesn't leak!
       setSubjects([]); 
       return;
     }
@@ -333,19 +347,11 @@ export default function TimetablePage() {
     }
 
     setGrid(newGrid);
-    // FIXED: Always replace subjects to clear leftover state from previous sections
+    // FIX: Always forcefully replace subjects with the ones fetched from DB
     setSubjects(Array.from(subjectMap.values()));
-    
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timetableRaw]);
 
-  // ── Reset section when class changes ──
-  useEffect(() => {
-    setSelectedSectionId("");
-    setGrid(emptyGrid(8));
-    setSubjects([]); // FIXED: Clear subjects when class changes
-    setActiveCellPicker(null);
-  }, [selectedClassId]); 
 
   // ═══════════════════════════════════════════════════════
   // SAVE MUTATION (FIXED AREA)
@@ -550,6 +556,17 @@ export default function TimetablePage() {
     },
     [grid, subjects]
   );
+
+  // ═══════════════════════════════════════════════════════
+  // ADD CLEAR GRID FUNCTIONALITY
+  // ═══════════════════════════════════════════════════════
+  const handleClearGrid = useCallback(() => {
+    if (window.confirm("Are you sure you want to clear the grid?")) {
+      setGrid(emptyGrid(numPeriods));
+      setActiveCellPicker(null);
+      toast.success("Grid cleared successfully!");
+    }
+  }, [numPeriods]);
 
   // ═══════════════════════════════════════════════════════
   // DERIVED DATA
@@ -1085,7 +1102,6 @@ export default function TimetablePage() {
                       </span>
                     </div>
                   ) : (
-                    // CHANGED: Added pb-32 to container so dropdown doesn't clip at the bottom
                     <div className="bg-gray-900/80 border border-gray-800 rounded-xl overflow-x-auto pb-32">
                       <table className="w-full min-w-[700px] border-collapse">
                         <thead>
@@ -1121,14 +1137,12 @@ export default function TimetablePage() {
                                     ) || SUBJECT_COLORS[0]
                                   : null;
 
-                                // CHANGED: Dropdown positioning logic
                                 const isBottomRows = pi >= activePeriods.length - 2;
                                 const dropdownPos = isBottomRows ? "bottom-full mb-1" : "top-full mt-1";
 
                                 return (
                                   <td
                                     key={cellKey}
-                                    // CHANGED: Added dynamic z-index to bring active cell to front
                                     className={`border border-gray-800/50 p-1 relative ${isPickerOpen ? "z-50" : "z-10"}`}
                                     onDragOver={(e) => {
                                       e.preventDefault();
@@ -1187,7 +1201,6 @@ export default function TimetablePage() {
                                     )}
 
                                     {isPickerOpen && !cell && (
-                                      // CHANGED: Applied dropdownPos class dynamically
                                       <div className={`absolute ${dropdownPos} left-0 w-44 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl py-1 max-h-48 overflow-y-auto`}>
                                         {subjects.map((subj) => {
                                           const subjColor = SUBJECT_COLORS[subj.colorIndex];
@@ -1269,7 +1282,9 @@ export default function TimetablePage() {
                         );
                       })}
                     </div>
-                    <div className="flex gap-3">
+                    
+                    {/* BUTTONS AREA (FIX: Added Clear Grid Button) */}
+                    <div className="flex flex-wrap items-center gap-3">
                       <button
                         type="button"
                         onClick={() => setActiveTab(2)}
@@ -1277,6 +1292,17 @@ export default function TimetablePage() {
                       >
                         ← Teachers
                       </button>
+
+                      {/* CLEAR GRID BUTTON */}
+                      <button
+                        type="button"
+                        onClick={handleClearGrid}
+                        className="px-5 py-2.5 bg-red-600/10 hover:bg-red-600/20 border border-red-500/30 text-red-400 rounded-xl text-sm font-medium transition-colors flex items-center gap-2"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Clear Grid
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => saveMutation.mutate()}
