@@ -274,6 +274,8 @@ export default function TimetablePage() {
     if (entries.length === 0) {
       setGrid(emptyGrid(8));
       setNumPeriods(8);
+      // FIXED: Clear subjects completely so old sections data doesn't leak!
+      setSubjects([]); 
       return;
     }
 
@@ -331,16 +333,17 @@ export default function TimetablePage() {
     }
 
     setGrid(newGrid);
-    if (subjects.length === 0) {
-      setSubjects(Array.from(subjectMap.values()));
-    }
+    // FIXED: Always replace subjects to clear leftover state from previous sections
+    setSubjects(Array.from(subjectMap.values()));
+    
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timetableRaw]);
 
   // ── Reset section when class changes ──
   useEffect(() => {
     setSelectedSectionId("");
-    setGrid(emptyGrid(numPeriods));
+    setGrid(emptyGrid(8));
+    setSubjects([]); // FIXED: Clear subjects when class changes
     setActiveCellPicker(null);
   }, [selectedClassId]); 
 
@@ -839,7 +842,7 @@ export default function TimetablePage() {
                       >
                         <div className="flex items-center gap-3">
                           <div
-                            className={`w-3 h-8 rounded-full ${c.bg}`} // Adjusted to use direct bg class
+                            className={`w-3 h-8 rounded-full ${c.bg}`}
                           />
                           <div>
                             <p className="text-white font-semibold text-sm">
