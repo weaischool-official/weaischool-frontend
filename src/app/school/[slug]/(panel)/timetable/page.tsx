@@ -138,7 +138,8 @@ function extractArray(data: unknown): Array<Record<string, unknown>> {
   if (!data) return [];
   if (Array.isArray(data)) return data as Array<Record<string, unknown>>;
   const r = data as Record<string, unknown>;
-  for (const key of ["items", "staff", "users", "results", "data", "entries", "timetable"]) {
+  // FIX: Added 'slots' here so it can read backend response properly
+  for (const key of ["items", "staff", "users", "results", "data", "entries", "slots", "timetable"]) {
     const val = r[key];
     if (Array.isArray(val)) return val as Array<Record<string, unknown>>;
   }
@@ -251,8 +252,8 @@ export default function TimetablePage() {
     queryKey: ["timetable", selectedClassId, selectedSectionId],
     queryFn: async () => {
       try {
-        // FIX: Changed from /timetable to /academics/timetable
-        const res = await api.get("/academics/timetable", {
+        // FIX: URL corrected to match backend /timetable/grid
+        const res = await api.get("/timetable/grid", {
           params: {
             class_id: selectedClassId,
             section_id: selectedSectionId,
@@ -290,7 +291,16 @@ export default function TimetablePage() {
     let colorIdx = 0;
 
     for (const entry of entries) {
-      const day = entry.day_of_week;
+      let day = 0;
+      // Handle both numeric and string days gracefully
+      if (typeof entry.day_of_week === "string") {
+        const dayStr = (entry.day_of_week as string).toUpperCase();
+        day = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"].indexOf(dayStr);
+        if (day === -1) day = 0;
+      } else {
+        day = entry.day_of_week;
+      }
+
       const period = entry.period_number - 1;
       if (day >= 0 && day < DAYS.length && period >= 0 && period < maxP) {
         const subjName = entry.subject_name || "";
@@ -361,16 +371,24 @@ export default function TimetablePage() {
         class_id: selectedClassId,
         section_id: selectedSectionId,
         entries,
+        // FIX: Mapping for backend compatibility so it doesn't reject your exact payload
+        slots: entries.map(e => ({
+          day_of_week: DAYS[e.day_of_week].toUpperCase(),
+          period_number: e.period_number,
+          subject_name: e.subject_name,
+          staff_id: e.teacher_id,
+          teacher_name: e.teacher_name
+        }))
       };
 
       try {
-        // FIX: Changed from /timetable to /academics/timetable
-        const res = await api.post("/academics/timetable", payload);
+        // FIX: URL corrected to match backend /timetable/save
+        const res = await api.post("/timetable/save", payload);
         return res.data;
       } catch (err: any) {
         if (err?.response?.status === 405) {
-          // FIX: Changed from /timetable to /academics/timetable
-          const res = await api.put("/academics/timetable", payload);
+          // FIX: URL corrected to match backend /timetable/save
+          const res = await api.put("/timetable/save", payload);
           return res.data;
         }
         throw err;
