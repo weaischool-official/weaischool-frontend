@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { useParams } from "next/navigation";
 import {
   Calendar,
   Clock,
@@ -18,6 +19,7 @@ import {
   GripVertical,
   Briefcase,
   Check,
+  Settings,
 } from "lucide-react";
 import {
   classApi,
@@ -89,6 +91,13 @@ interface TimetableEntry {
   teacher_name?: string | null;
 }
 
+interface PeriodConfig {
+  startTime: string;
+  endTime: string;
+  isBreak: boolean;
+  label: string;
+}
+
 // ═══════════════════════════════════════════════════════════
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════
@@ -105,7 +114,7 @@ const COMMON_SUBJECTS = [
   "Business Studies", "Environmental Studies", "General Knowledge"
 ];
 
-// CHANGED: Made colors significantly darker and text white for better visibility
+// Darker premium colors for subject chips
 const SUBJECT_COLORS = [
   { bg: "bg-blue-600", text: "text-white", light: "bg-blue-900/60", border: "border-blue-500" },
   { bg: "bg-purple-600", text: "text-white", light: "bg-purple-900/60", border: "border-purple-500" },
@@ -138,7 +147,6 @@ function extractArray(data: unknown): Array<Record<string, unknown>> {
   if (!data) return [];
   if (Array.isArray(data)) return data as Array<Record<string, unknown>>;
   const r = data as Record<string, unknown>;
-  // FIX: Added 'slots' here so it can read backend response properly
   for (const key of ["items", "staff", "users", "results", "data", "entries", "slots", "timetable"]) {
     const val = r[key];
     if (Array.isArray(val)) return val as Array<Record<string, unknown>>;
@@ -172,21 +180,27 @@ function emptyGrid(periodsCount: number): (GridCell | null)[][] {
 
 export default function TimetablePage() {
   const queryClient = useQueryClient();
+  const params = useParams();
+  const slug = (params?.slug as string) || "school";
+  const STORAGE_KEY = `timetable_periods_${slug}`;
 
   // ── Core State ──
   const [activeTab, setActiveTab] = useState(1);
   const [selectedClassId, setSelectedClassId] = useState("");
   const [selectedSectionId, setSelectedSectionId] = useState("");
 
-  // ── Dynamic Grid Configuration ──
-  const [numPeriods, setNumPeriods] = useState(8); // Default 8 periods/day
+  // ── Dynamic Grid & Periods Configuration ──
+  const [numPeriods, setNumPeriods] = useState(8);
   const activePeriods = useMemo(() => Array.from({ length: numPeriods }, (_, i) => i + 1), [numPeriods]);
   const totalSlots = DAYS.length * numPeriods;
+
+  const [showPeriodConfig, setShowPeriodConfig] = useState(false);
+  const [periodConfigs, setPeriodConfigs] = useState<Record<number, PeriodConfig>>({});
 
   // ── Tab 1: Subjects ──
   const [subjects, setSubjects] = useState<SubjectConfig[]>([]);
   const [newSubjName, setNewSubjName] = useState("");
-  const [newSubjPeriods, setNewSubjPeriods] = useState(6); // Default 6 per week
+  const [newSubjPeriods, setNewSubjPeriods] = useState(6);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
   // ── Tab 3: Grid ──
@@ -198,35 +212,55 @@ export default function TimetablePage() {
   // DATA FETCHING 
   // ═══════════════════════════════════════════════════════
 
+  // Load period configs from local storage so they don't have to re-enter
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        setPeriodConfigs(JSON.parse(saved));
+      } catch (e) {}
+    }
+  }, [STORAGE_KEY]);
+
+  const updatePeriodConfig = (p: number, field: keyof PeriodConfig, val: any) => {
+    setPeriodConfigs(prev => {
+      const next = { ...prev, [p]: { ...(prev[p] || {}), [field]: val } };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+
+    // If marked as break, clear any dropped subjects in that row automatically
+    if (field === "isBreak" && val === true) {
+      setGrid(prev => {
+        const next = prev.map(r => [...r]);
+        for (let d = 0; d < DAYS.length; d++) {
+          next[d][p - 1] = null;
+        }
+        return next;
+      });
+    }
+  };
+
   // 1. Academic Years
   const { data: yearsData } = useQuery({
     queryKey: ["academic-years"],
     queryFn: () => academicYearApi.list().then((r) => r.data),
   });
   const academicYears = asItems<AcademicYear>(yearsData);
-  const currentYear =
-    academicYears.find((y) => y.is_current || y.is_active) || academicYears[0];
+  const currentYear = academicYears.find((y) => y.is_current || y.is_active) || academicYears[0];
 
-  // 2. Classes (depends on academic year)
-  const {
-    data: classesData,
-    isLoading: classesLoading,
-    refetch: refetchClasses,
-  } = useQuery({
+  // 2. Classes
+  const { data: classesData, isLoading: classesLoading, refetch: refetchClasses } = useQuery({
     queryKey: ["classes", currentYear?.id],
     queryFn: () => classApi.list(currentYear?.id).then((r) => r.data),
     enabled: !!currentYear?.id,
   });
   const classes = useMemo(() => {
     const c = asItems<ClassItem>(classesData);
-    return [...c].sort(
-      (a, b) =>
-        (a.numeric_level ?? a.class_level ?? 0) -
-        (b.numeric_level ?? b.class_level ?? 0)
-    );
+    return [...c].sort((a, b) => (a.numeric_level ?? a.class_level ?? 0) - (b.numeric_level ?? b.class_level ?? 0));
   }, [classesData]);
 
-  // 3. Sections (depends on selected class)
+  // 3. Sections
   const { data: sectionsData, isLoading: sectionsLoading } = useQuery({
     queryKey: ["sections", selectedClassId],
     queryFn: () => sectionApi.listByClass(selectedClassId).then((r) => r.data),
@@ -242,17 +276,13 @@ export default function TimetablePage() {
       return res.data;
     },
   });
-  const allStaff = useMemo(
-    () => extractArray(staffRaw) as StaffMember[],
-    [staffRaw]
-  );
+  const allStaff = useMemo(() => extractArray(staffRaw) as StaffMember[], [staffRaw]);
 
   // 5. Existing Timetable
-  const { data: timetableRaw, isLoading: timetableLoading } = useQuery({
+  const { data: timetableRaw, isLoading: timetableLoading, isFetching: timetableFetching } = useQuery({
     queryKey: ["timetable", selectedClassId, selectedSectionId],
     queryFn: async () => {
       try {
-        // FIX: URL corrected to match backend /timetable/grid
         const res = await api.get("/timetable/grid", {
           params: {
             class_id: selectedClassId,
@@ -267,25 +297,23 @@ export default function TimetablePage() {
     enabled: !!selectedClassId && !!selectedSectionId,
   });
 
-  // ── FIX: Force clear local state whenever Class OR Section dropdown changes ──
+  // Force clear local state whenever Class OR Section dropdown changes
   useEffect(() => {
     setGrid(emptyGrid(8));
     setNumPeriods(8);
-    setSubjects([]); // Wipe leaked subjects
+    setSubjects([]); 
     setActiveCellPicker(null);
   }, [selectedClassId, selectedSectionId]);
 
-  // ── Reset section when class changes ──
   useEffect(() => {
     setSelectedSectionId("");
   }, [selectedClassId]); 
 
-  // ── Populate grid + subjects from existing timetable ──
+  // ── Populate grid + subjects from existing timetable (BUG FIXED) ──
   useEffect(() => {
     if (!timetableRaw) return;
     const entries = extractArray(timetableRaw) as unknown as TimetableEntry[];
     
-    // FIX: If the timetable for this section is empty, MUST clear the subjects too
     if (entries.length === 0) {
       setGrid(emptyGrid(8));
       setNumPeriods(8);
@@ -293,12 +321,9 @@ export default function TimetablePage() {
       return;
     }
 
-    // Determine max periods needed based on existing data
     let maxP = 8;
     for (const entry of entries) {
-      if (entry.period_number > maxP) {
-        maxP = entry.period_number;
-      }
+      if (entry.period_number > maxP) maxP = entry.period_number;
     }
 
     setNumPeriods(maxP);
@@ -308,7 +333,6 @@ export default function TimetablePage() {
 
     for (const entry of entries) {
       let day = 0;
-      // Handle both numeric and string days gracefully
       if (typeof entry.day_of_week === "string") {
         const dayStr = (entry.day_of_week as string).toUpperCase();
         day = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"].indexOf(dayStr);
@@ -322,39 +346,48 @@ export default function TimetablePage() {
         const subjName = entry.subject_name || "";
         const tId = entry.teacher_id || "";
         const tName = entry.teacher_name || "";
-        const color = SUBJECT_COLORS[colorIdx % SUBJECT_COLORS.length];
-
-        newGrid[day][period] = {
-          subject: subjName,
-          teacherId: tId,
-          teacherName: tName,
-          color: color.bg,
-        };
-
-        if (!subjectMap.has(subjName)) {
+        
+        // BUG FIX: Strictly use existing color if subject is already in map, otherwise assign new color
+        let finalColorBg = "";
+        let finalColorIndex = 0;
+        
+        if (subjectMap.has(subjName)) {
+          const existing = subjectMap.get(subjName)!;
+          finalColorBg = existing.color;
+          finalColorIndex = existing.colorIndex;
+        } else {
+          finalColorIndex = colorIdx % SUBJECT_COLORS.length;
+          finalColorBg = SUBJECT_COLORS[finalColorIndex].bg;
           subjectMap.set(subjName, {
             name: subjName,
             periodsPerWeek: 0,
-            color: color.bg,
-            colorIndex: colorIdx % SUBJECT_COLORS.length,
+            color: finalColorBg,
+            colorIndex: finalColorIndex,
             teacherId: tId,
             teacherName: tName,
           });
           colorIdx++;
         }
+
+        newGrid[day][period] = {
+          subject: subjName,
+          teacherId: tId,
+          teacherName: tName,
+          color: finalColorBg,
+        };
+
         subjectMap.get(subjName)!.periodsPerWeek++;
       }
     }
 
     setGrid(newGrid);
-    // FIX: Always forcefully replace subjects with the ones fetched from DB
     setSubjects(Array.from(subjectMap.values()));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timetableRaw]);
 
 
   // ═══════════════════════════════════════════════════════
-  // SAVE MUTATION (FIXED AREA)
+  // SAVE MUTATION
   // ═══════════════════════════════════════════════════════
 
   const saveMutation = useMutation({
@@ -380,7 +413,6 @@ export default function TimetablePage() {
         class_id: selectedClassId,
         section_id: selectedSectionId,
         entries,
-        // FIX: Mapping for backend compatibility so it doesn't reject your exact payload
         slots: entries.map(e => ({
           day_of_week: DAYS[e.day_of_week].toUpperCase(),
           period_number: e.period_number,
@@ -391,12 +423,10 @@ export default function TimetablePage() {
       };
 
       try {
-        // FIX: URL corrected to match backend /timetable/save
         const res = await api.post("/timetable/save", payload);
         return res.data;
       } catch (err: any) {
         if (err?.response?.status === 405) {
-          // FIX: URL corrected to match backend /timetable/save
           const res = await api.put("/timetable/save", payload);
           return res.data;
         }
@@ -411,7 +441,6 @@ export default function TimetablePage() {
     },
     onError: (err: any) => {
       let errMsg = err?.response?.data?.message || err?.response?.data?.error || err?.response?.data?.detail;
-      
       if (typeof errMsg === 'object') {
         if (Array.isArray(errMsg)) {
            errMsg = errMsg.map((e: any) => e.msg || JSON.stringify(e)).join(", ");
@@ -419,23 +448,27 @@ export default function TimetablePage() {
            errMsg = JSON.stringify(errMsg);
         }
       }
-
-      if (errMsg) {
-        toast.error(`Save Failed: ${errMsg}`);
-      } else {
-        toast.error("Could not save to server. Please check your data.");
-      }
+      if (errMsg) toast.error(`Save Failed: ${errMsg}`);
+      else toast.error("Could not save to server. Please check your data.");
     },
   });
+
+  // ═══════════════════════════════════════════════════════
+  // CLEAR GRID FUNCTION
+  // ═══════════════════════════════════════════════════════
+  const handleClearGrid = useCallback(() => {
+    if (window.confirm("Are you sure you want to clear the grid? (Breaks and Timings will stay)")) {
+      setGrid(emptyGrid(numPeriods));
+      setActiveCellPicker(null);
+      toast.success("Grid cleared successfully!");
+    }
+  }, [numPeriods]);
 
   // ═══════════════════════════════════════════════════════
   // SUBJECT HELPERS
   // ═══════════════════════════════════════════════════════
 
-  const totalPeriodsUsed = useMemo(
-    () => subjects.reduce((sum, s) => sum + s.periodsPerWeek, 0),
-    [subjects]
-  );
+  const totalPeriodsUsed = useMemo(() => subjects.reduce((sum, s) => sum + s.periodsPerWeek, 0), [subjects]);
 
   const addSubject = useCallback((explicitName?: string) => {
     const name = (typeof explicitName === "string" ? explicitName : newSubjName).trim();
@@ -455,9 +488,7 @@ export default function TimetablePage() {
       setGrid((prev) => {
         const next = prev.map((r) => [...r]);
         for (let d = 0; d < DAYS.length; d++) {
-          while (next[d].length < newNum) {
-            next[d].push(null);
-          }
+          while (next[d].length < newNum) next[d].push(null);
         }
         return next;
       });
@@ -521,6 +552,12 @@ export default function TimetablePage() {
 
   const setGridCell = useCallback(
     (day: number, period: number, subjectName: string | null) => {
+      // Prevent dropping if this row is marked as a break
+      if (periodConfigs[period + 1]?.isBreak) {
+        toast.error("Cannot assign subject to a Break period!");
+        return;
+      }
+
       if (subjectName) {
         const existingPeriodIndex = grid[day].findIndex(
           (cell) => cell?.subject.toLowerCase() === subjectName.toLowerCase()
@@ -554,28 +591,15 @@ export default function TimetablePage() {
       });
       setActiveCellPicker(null);
     },
-    [grid, subjects]
+    [grid, subjects, periodConfigs]
   );
-
-  // ═══════════════════════════════════════════════════════
-  // ADD CLEAR GRID FUNCTIONALITY
-  // ═══════════════════════════════════════════════════════
-  const handleClearGrid = useCallback(() => {
-    if (window.confirm("Are you sure you want to clear the grid?")) {
-      setGrid(emptyGrid(numPeriods));
-      setActiveCellPicker(null);
-      toast.success("Grid cleared successfully!");
-    }
-  }, [numPeriods]);
 
   // ═══════════════════════════════════════════════════════
   // DERIVED DATA
   // ═══════════════════════════════════════════════════════
 
-  const selectedClassName =
-    classes.find((c) => c.id === selectedClassId)?.name || "";
-  const selectedSectionName =
-    sections.find((s) => s.id === selectedSectionId)?.name || "";
+  const selectedClassName = classes.find((c) => c.id === selectedClassId)?.name || "";
+  const selectedSectionName = sections.find((s) => s.id === selectedSectionId)?.name || "";
   const hasSelection = !!selectedClassId && !!selectedSectionId;
 
   const assignedSubjects = subjects.filter((s) => s.teacherId);
@@ -816,28 +840,6 @@ export default function TimetablePage() {
                     Add
                   </button>
                 </div>
-
-                <div className="mt-3 flex items-center gap-4 text-xs text-gray-500">
-                  <span>
-                    Total periods:{" "}
-                    <span
-                      className={
-                        totalPeriodsUsed > totalSlots
-                          ? "text-red-400 font-bold"
-                          : "text-blue-400 font-bold"
-                      }
-                    >
-                      {totalPeriodsUsed}
-                    </span>
-                    /{totalSlots}
-                  </span>
-                  <span>
-                    Remaining:{" "}
-                    <span className="text-green-400 font-bold">
-                      {Math.max(0, totalSlots - totalPeriodsUsed)}
-                    </span>
-                  </span>
-                </div>
               </div>
 
               {subjects.length === 0 ? (
@@ -858,9 +860,7 @@ export default function TimetablePage() {
                         className={`${c.light} border ${c.border} rounded-xl p-4 flex items-center justify-between`}
                       >
                         <div className="flex items-center gap-3">
-                          <div
-                            className={`w-3 h-8 rounded-full ${c.bg}`}
-                          />
+                          <div className={`w-3 h-8 rounded-full ${c.bg}`} />
                           <div>
                             <p className="text-white font-semibold text-sm">
                               {subj.name}
@@ -969,9 +969,7 @@ export default function TimetablePage() {
                           className="bg-gray-900/80 border border-gray-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center gap-3"
                         >
                           <div className="flex items-center gap-3 sm:w-48 shrink-0">
-                            <div
-                              className={`w-3 h-8 rounded-full ${c.bg}`}
-                            />
+                            <div className={`w-3 h-8 rounded-full ${c.bg}`} />
                             <span className="text-white font-semibold text-sm">
                               {subj.name}
                             </span>
@@ -995,10 +993,7 @@ export default function TimetablePage() {
                                 const sName = getStaffName(s);
                                 const desig =
                                   s.designation ||
-                                  String(
-                                    (s.extras as Record<string, unknown>)
-                                      ?.designation || "Teacher"
-                                  );
+                                  String((s.extras as Record<string, unknown>)?.designation || "Teacher");
                                 const subjs = getStaffSubjects(s);
                                 return (
                                   <option key={s.id} value={s.id}>
@@ -1062,6 +1057,71 @@ export default function TimetablePage() {
                 </div>
               ) : (
                 <>
+                  {/* TIMINGS CONFIGURATION PANEL */}
+                  {showPeriodConfig && (
+                    <div className="bg-gray-900/90 border border-blue-500/30 rounded-xl p-5 shadow-2xl animate-in fade-in slide-in-from-top-4">
+                      <div className="flex justify-between items-center mb-5 border-b border-gray-800 pb-3">
+                        <h3 className="text-white font-bold flex items-center gap-2">
+                          <Settings className="w-5 h-5 text-blue-400" />
+                          Configure Period Timings & Breaks
+                        </h3>
+                        <button onClick={() => setShowPeriodConfig(false)} className="text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 p-1.5 rounded-lg transition-colors">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {activePeriods.map(p => (
+                          <div key={p} className={`bg-gray-950 border rounded-xl p-4 space-y-3 transition-colors ${periodConfigs[p]?.isBreak ? 'border-amber-500/50 shadow-[0_0_10px_rgba(245,158,11,0.1)]' : 'border-gray-800'}`}>
+                            <div className="flex justify-between items-center border-b border-gray-800 pb-2">
+                              <span className={`text-sm font-bold ${periodConfigs[p]?.isBreak ? 'text-amber-400' : 'text-gray-300'}`}>Period {p}</span>
+                              <label className="flex items-center gap-2 text-xs font-semibold text-gray-400 cursor-pointer hover:text-white transition-colors">
+                                <input 
+                                  type="checkbox" 
+                                  checked={periodConfigs[p]?.isBreak || false} 
+                                  onChange={e => updatePeriodConfig(p, 'isBreak', e.target.checked)} 
+                                  className="w-4 h-4 rounded bg-gray-800 border-gray-700 text-amber-500 focus:ring-amber-500 focus:ring-offset-gray-950 cursor-pointer" 
+                                />
+                                Is Break?
+                              </label>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-[10px] uppercase tracking-wider font-semibold text-gray-500 mb-1">Start Time</label>
+                                <input 
+                                  type="time" 
+                                  value={periodConfigs[p]?.startTime || ""} 
+                                  onChange={e => updatePeriodConfig(p, 'startTime', e.target.value)} 
+                                  className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-xs text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all" 
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] uppercase tracking-wider font-semibold text-gray-500 mb-1">End Time</label>
+                                <input 
+                                  type="time" 
+                                  value={periodConfigs[p]?.endTime || ""} 
+                                  onChange={e => updatePeriodConfig(p, 'endTime', e.target.value)} 
+                                  className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-xs text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all" 
+                                />
+                              </div>
+                            </div>
+                            {periodConfigs[p]?.isBreak && (
+                              <div className="pt-2 animate-in fade-in slide-in-from-top-1">
+                                <label className="block text-[10px] uppercase tracking-wider font-semibold text-amber-500/70 mb-1">Break Label</label>
+                                <input 
+                                  type="text" 
+                                  placeholder="e.g. LUNCH BREAK" 
+                                  value={periodConfigs[p]?.label || ""} 
+                                  onChange={e => updatePeriodConfig(p, 'label', e.target.value)} 
+                                  className="w-full bg-amber-500/10 border border-amber-500/30 rounded-lg p-2 text-xs text-amber-100 placeholder-amber-700/50 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none transition-all" 
+                                />
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="bg-gray-900/80 border border-gray-800 rounded-xl p-4">
                     <p className="text-xs text-gray-500 mb-3 uppercase tracking-wider font-semibold">
                       Drag subjects to grid or click cells to assign
@@ -1079,9 +1139,7 @@ export default function TimetablePage() {
                             className={`${c.light} border ${c.border} rounded-lg px-3 py-2 flex items-center gap-2 cursor-grab active:cursor-grabbing hover:opacity-80 transition-opacity select-none`}
                           >
                             <GripVertical className="w-3 h-3 text-gray-500" />
-                            <div
-                              className={`w-2.5 h-2.5 rounded-full ${c.bg}`}
-                            />
+                            <div className={`w-2.5 h-2.5 rounded-full ${c.bg}`} />
                             <span className="text-xs font-semibold text-white">
                               {subj.name}
                             </span>
@@ -1094,11 +1152,11 @@ export default function TimetablePage() {
                     </div>
                   </div>
 
-                  {timetableLoading ? (
+                  {timetableFetching ? (
                     <div className="flex items-center justify-center py-16">
                       <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
                       <span className="ml-3 text-gray-400">
-                        Loading existing timetable...
+                        Loading timetable for this section...
                       </span>
                     </div>
                   ) : (
@@ -1106,7 +1164,7 @@ export default function TimetablePage() {
                       <table className="w-full min-w-[700px] border-collapse">
                         <thead>
                           <tr>
-                            <th className="sticky left-0 z-10 bg-gray-900 border-b border-r border-gray-800 px-3 py-3 text-xs text-gray-500 font-semibold w-16">
+                            <th className="sticky left-0 z-20 bg-gray-900 border-b border-r border-gray-800 px-3 py-3 text-xs text-gray-500 font-semibold w-24">
                               <Clock className="w-4 h-4 mx-auto" />
                             </th>
                             {DAYS.map((day, di) => (
@@ -1120,149 +1178,145 @@ export default function TimetablePage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {activePeriods.map((p, pi) => (
-                            <tr key={p}>
-                              <td className="sticky left-0 z-10 bg-gray-900 border-r border-gray-800 px-2 py-1 text-center">
-                                <span className="text-xs font-bold text-gray-500">
-                                  P{p}
-                                </span>
-                              </td>
-                              {DAYS.map((_, di) => {
-                                const cell = grid[di][pi];
-                                const cellKey = `${di}-${pi}`;
-                                const isPickerOpen = activeCellPicker === cellKey;
-                                const c = cell
-                                  ? SUBJECT_COLORS.find(
-                                      (sc) => sc.bg === cell.color
-                                    ) || SUBJECT_COLORS[0]
-                                  : null;
-
-                                const isBottomRows = pi >= activePeriods.length - 2;
-                                const dropdownPos = isBottomRows ? "bottom-full mb-1" : "top-full mt-1";
-
-                                return (
-                                  <td
-                                    key={cellKey}
-                                    className={`border border-gray-800/50 p-1 relative ${isPickerOpen ? "z-50" : "z-10"}`}
-                                    onDragOver={(e) => {
-                                      e.preventDefault();
-                                      e.dataTransfer.dropEffect = "move";
-                                    }}
-                                    onDrop={(e) => {
-                                      e.preventDefault();
-                                      const subj =
-                                        draggedSubject ||
-                                        e.dataTransfer.getData(
-                                          "text/plain"
-                                        );
-                                      if (subj) {
-                                        setGridCell(di, pi, subj);
-                                        setDraggedSubject(null);
-                                      }
-                                    }}
-                                  >
-                                    {cell ? (
-                                      <div
-                                        className={`${c?.light || ""} border ${c?.border || ""} rounded-lg px-2 py-2 text-center group relative min-h-[56px] flex flex-col items-center justify-center`}
-                                      >
-                                        <span
-                                          className={`text-xs font-bold ${c?.text || "text-white"} truncate w-full`}
-                                        >
-                                          {cell.subject}
-                                        </span>
-                                        {cell.teacherName && (
-                                          <span className="text-[10px] text-gray-300 truncate w-full mt-0.5">
-                                            {cell.teacherName.split(" ")[0]}
-                                          </span>
-                                        )}
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setGridCell(di, pi, null);
-                                          }}
-                                          className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                                        >
-                                          <X className="w-2.5 h-2.5" />
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setActiveCellPicker(
-                                            isPickerOpen ? null : cellKey
-                                          )
-                                        }
-                                        className="w-full min-h-[56px] rounded-lg border border-dashed border-gray-800 hover:border-blue-500/40 hover:bg-blue-500/5 transition-all flex items-center justify-center"
-                                      >
-                                        <Plus className="w-3.5 h-3.5 text-gray-700" />
-                                      </button>
+                          {activePeriods.map((p, pi) => {
+                            const pConfig = periodConfigs[p] || { startTime: "", endTime: "", isBreak: false, label: "" };
+                            
+                            return (
+                              <tr key={p}>
+                                {/* Row Header with Timings */}
+                                <td className="sticky left-0 z-20 bg-gray-900 border-r border-b border-gray-800 px-2 py-2 text-center h-[72px]">
+                                  <div className="flex flex-col items-center justify-center h-full space-y-1">
+                                    <span className={`text-xs font-bold ${pConfig.isBreak ? 'text-amber-500' : 'text-gray-400'}`}>P{p}</span>
+                                    {pConfig.startTime && pConfig.endTime && (
+                                      <span className="text-[9px] font-mono text-gray-500 whitespace-nowrap bg-gray-950 px-1.5 py-0.5 rounded border border-gray-800">
+                                        {pConfig.startTime}-{pConfig.endTime}
+                                      </span>
                                     )}
-
-                                    {isPickerOpen && !cell && (
-                                      <div className={`absolute ${dropdownPos} left-0 w-44 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl py-1 max-h-48 overflow-y-auto`}>
-                                        {subjects.map((subj) => {
-                                          const subjColor = SUBJECT_COLORS[subj.colorIndex];
-                                          return (
-                                            <button
-                                              key={subj.name}
-                                              type="button"
-                                              onClick={() =>
-                                                setGridCell(
-                                                  di,
-                                                  pi,
-                                                  subj.name
-                                                )
-                                              }
-                                              className="w-full px-3 py-2 text-left text-xs hover:bg-gray-800 flex items-center gap-2 transition-colors"
-                                            >
-                                              <div
-                                                className={`w-2 h-2 rounded-full ${subjColor.bg}`}
-                                              />
-                                              <span className="text-white font-medium truncate">
-                                                {subj.name}
-                                              </span>
-                                              {subj.teacherName && (
-                                                <span className="text-gray-500 truncate ml-auto text-[10px]">
-                                                  {subj.teacherName.split(
-                                                    " "
-                                                  )[0]}
-                                                </span>
-                                              )}
-                                            </button>
-                                          );
-                                        })}
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setActiveCellPicker(null)
-                                          }
-                                          className="w-full px-3 py-2 text-left text-xs text-gray-500 hover:bg-gray-800 border-t border-gray-800 mt-1"
-                                        >
-                                          Cancel
-                                        </button>
-                                      </div>
-                                    )}
+                                  </div>
+                                </td>
+                                
+                                {/* Cells */}
+                                {pConfig.isBreak ? (
+                                  <td colSpan={DAYS.length} className="bg-gray-900/40 border-b border-gray-800/50 p-2 relative overflow-hidden h-[72px]">
+                                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20">
+                                      <div className="w-full h-[1px] bg-gradient-to-r from-transparent via-gray-500 to-transparent"></div>
+                                    </div>
+                                    <div className="text-center w-full flex items-center justify-center relative z-10">
+                                      <span className="text-sm font-black text-gray-500 uppercase tracking-[0.4em] bg-[#0b0f19] px-6 py-1.5 rounded-full border border-gray-800 shadow-inner">
+                                        {pConfig.label || "BREAK"}
+                                      </span>
+                                    </div>
                                   </td>
-                                );
-                              })}
-                            </tr>
-                          ))}
+                                ) : (
+                                  DAYS.map((_, di) => {
+                                    const cell = grid[di][pi];
+                                    const cellKey = `${di}-${pi}`;
+                                    const isPickerOpen = activeCellPicker === cellKey;
+                                    const c = cell
+                                      ? SUBJECT_COLORS.find((sc) => sc.bg === cell.color) || SUBJECT_COLORS[0]
+                                      : null;
+
+                                    const isBottomRows = pi >= activePeriods.length - 2;
+                                    const dropdownPos = isBottomRows ? "bottom-full mb-1" : "top-full mt-1";
+
+                                    return (
+                                      <td
+                                        key={cellKey}
+                                        className={`border-b border-r border-gray-800/50 p-1.5 relative h-[72px] ${isPickerOpen ? "z-50" : "z-10"}`}
+                                        onDragOver={(e) => {
+                                          e.preventDefault();
+                                          e.dataTransfer.dropEffect = "move";
+                                        }}
+                                        onDrop={(e) => {
+                                          e.preventDefault();
+                                          const subj = draggedSubject || e.dataTransfer.getData("text/plain");
+                                          if (subj) {
+                                            setGridCell(di, pi, subj);
+                                            setDraggedSubject(null);
+                                          }
+                                        }}
+                                      >
+                                        {cell ? (
+                                          <div className={`${c?.light || ""} border ${c?.border || ""} rounded-lg px-2 py-2 text-center group relative h-full flex flex-col items-center justify-center shadow-sm`}>
+                                            <span className={`text-xs font-bold ${c?.text || "text-white"} truncate w-full`}>
+                                              {cell.subject}
+                                            </span>
+                                            {cell.teacherName && (
+                                              <span className="text-[10px] text-gray-300 truncate w-full mt-0.5 font-medium">
+                                                {cell.teacherName.split(" ")[0]}
+                                              </span>
+                                            )}
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setGridCell(di, pi, null);
+                                              }}
+                                              className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-lg hover:scale-110"
+                                            >
+                                              <X className="w-3 h-3" />
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            onClick={() => setActiveCellPicker(isPickerOpen ? null : cellKey)}
+                                            className="w-full h-full rounded-lg border border-dashed border-gray-800 hover:border-blue-500/40 hover:bg-blue-500/5 transition-all flex items-center justify-center group"
+                                          >
+                                            <Plus className="w-4 h-4 text-gray-700 group-hover:text-blue-400 group-hover:scale-110 transition-all" />
+                                          </button>
+                                        )}
+
+                                        {isPickerOpen && !cell && (
+                                          <div className={`absolute ${dropdownPos} left-0 w-48 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl py-1 max-h-56 overflow-y-auto`}>
+                                            {subjects.map((subj) => {
+                                              const subjColor = SUBJECT_COLORS[subj.colorIndex];
+                                              return (
+                                                <button
+                                                  key={subj.name}
+                                                  type="button"
+                                                  onClick={() => setGridCell(di, pi, subj.name)}
+                                                  className="w-full px-3 py-2.5 text-left text-xs hover:bg-gray-800 flex items-center gap-2 transition-colors border-b border-gray-800/50 last:border-0"
+                                                >
+                                                  <div className={`w-2 h-2 rounded-full shrink-0 ${subjColor.bg}`} />
+                                                  <span className="text-white font-medium truncate flex-1">
+                                                    {subj.name}
+                                                  </span>
+                                                  {subj.teacherName && (
+                                                    <span className="text-gray-500 truncate text-[10px] shrink-0">
+                                                      {subj.teacherName.split(" ")[0]}
+                                                    </span>
+                                                  )}
+                                                </button>
+                                              );
+                                            })}
+                                            <button
+                                              type="button"
+                                              onClick={() => setActiveCellPicker(null)}
+                                              className="w-full px-3 py-2.5 text-center text-xs text-gray-400 hover:bg-gray-800 hover:text-white mt-1 border-t border-gray-700 font-semibold"
+                                            >
+                                              Cancel
+                                            </button>
+                                          </div>
+                                        )}
+                                      </td>
+                                    );
+                                  })
+                                )}
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
                   )}
 
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mt-6">
+                  <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mt-6">
                     <div className="flex flex-wrap gap-4 text-xs text-gray-400">
                       <span>
                         Filled:{" "}
                         <span className="text-white font-bold">
-                          {Object.values(gridSubjectCounts).reduce(
-                            (a, b) => a + b,
-                            0
-                          )}
+                          {Object.values(gridSubjectCounts).reduce((a, b) => a + b, 0)}
                         </span>
                         /{totalSlots}
                       </span>
@@ -1270,34 +1324,28 @@ export default function TimetablePage() {
                         const placed = gridSubjectCounts[subj.name] || 0;
                         const done = placed >= subj.periodsPerWeek;
                         return (
-                          <span
-                            key={subj.name}
-                            className={
-                              done ? "text-green-400" : "text-yellow-400"
-                            }
-                          >
-                            {subj.name}: {placed}/{subj.periodsPerWeek}
-                            {done ? " ✓" : ""}
+                          <span key={subj.name} className={done ? "text-green-400 font-medium" : "text-yellow-400"}>
+                            {subj.name}: {placed}/{subj.periodsPerWeek} {done ? "✓" : ""}
                           </span>
                         );
                       })}
                     </div>
                     
-                    {/* BUTTONS AREA (FIX: Added Clear Grid Button) */}
+                    {/* BUTTONS AREA (Timings, Clear, Save) */}
                     <div className="flex flex-wrap items-center gap-3">
                       <button
                         type="button"
-                        onClick={() => setActiveTab(2)}
-                        className="px-5 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl text-sm font-medium transition-colors"
+                        onClick={() => setShowPeriodConfig(!showPeriodConfig)}
+                        className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all flex items-center gap-2 border ${showPeriodConfig ? 'bg-blue-600/20 border-blue-500/50 text-blue-400' : 'bg-gray-800 hover:bg-gray-700 border-gray-700 text-gray-300'}`}
                       >
-                        ← Teachers
+                        <Settings className="w-4 h-4" />
+                        Timings & Breaks
                       </button>
 
-                      {/* CLEAR GRID BUTTON */}
                       <button
                         type="button"
                         onClick={handleClearGrid}
-                        className="px-5 py-2.5 bg-red-600/10 hover:bg-red-600/20 border border-red-500/30 text-red-400 rounded-xl text-sm font-medium transition-colors flex items-center gap-2"
+                        className="px-5 py-2.5 bg-red-900/20 hover:bg-red-900/40 border border-red-500/30 text-red-400 rounded-xl text-sm font-medium transition-colors flex items-center gap-2"
                       >
                         <Trash2 className="w-4 h-4" />
                         Clear Grid
@@ -1307,7 +1355,7 @@ export default function TimetablePage() {
                         type="button"
                         onClick={() => saveMutation.mutate()}
                         disabled={saveMutation.isPending}
-                        className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 text-white rounded-xl text-sm font-bold transition-colors flex items-center gap-2"
+                        className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 text-white rounded-xl text-sm font-bold transition-colors flex items-center gap-2 shadow-lg shadow-blue-500/20"
                       >
                         {saveMutation.isPending ? (
                           <>
