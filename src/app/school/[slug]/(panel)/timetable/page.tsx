@@ -117,7 +117,7 @@ const SUBJECT_COLORS = [
   { bg: "bg-teal-600", text: "text-white", light: "bg-teal-900/60", border: "border-teal-500" },
   { bg: "bg-orange-600", text: "text-white", light: "bg-orange-900/60", border: "border-orange-500" },
   { bg: "bg-cyan-600", text: "text-white", light: "bg-cyan-900/60", border: "border-cyan-500" },
-  { bg: "bg-emerald-600", text: "text-white", light: "bg-emerald-900/60", border: "border-emerald-500" },
+  { bg: "bg-emerald-600", text: "text-white", light: "bg-emerald-900/60", border: "emerald-500" },
   { bg: "bg-rose-600", text: "text-white", light: "bg-rose-900/60", border: "border-rose-500" },
 ];
 
@@ -251,7 +251,8 @@ export default function TimetablePage() {
     queryKey: ["timetable", selectedClassId, selectedSectionId],
     queryFn: async () => {
       try {
-        const res = await api.get("/timetable", {
+        // FIX: Changed from /timetable to /academics/timetable
+        const res = await api.get("/academics/timetable", {
           params: {
             class_id: selectedClassId,
             section_id: selectedSectionId,
@@ -363,11 +364,13 @@ export default function TimetablePage() {
       };
 
       try {
-        const res = await api.post("/timetable", payload);
+        // FIX: Changed from /timetable to /academics/timetable
+        const res = await api.post("/academics/timetable", payload);
         return res.data;
       } catch (err: any) {
         if (err?.response?.status === 405) {
-          const res = await api.put("/timetable", payload);
+          // FIX: Changed from /timetable to /academics/timetable
+          const res = await api.put("/academics/timetable", payload);
           return res.data;
         }
         throw err;
