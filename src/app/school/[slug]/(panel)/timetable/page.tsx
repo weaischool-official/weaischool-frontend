@@ -85,8 +85,8 @@ interface TimetableEntry {
   day_of_week: number;
   period_number: number;
   subject_name: string;
-  teacher_id?: string;
-  teacher_name?: string;
+  teacher_id?: string | null;
+  teacher_name?: string | null;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -334,7 +334,7 @@ export default function TimetablePage() {
   }, [selectedClassId]); 
 
   // ═══════════════════════════════════════════════════════
-  // SAVE MUTATION
+  // SAVE MUTATION (FIXED AREA)
   // ═══════════════════════════════════════════════════════
 
   const saveMutation = useMutation({
@@ -348,27 +348,29 @@ export default function TimetablePage() {
               day_of_week: d,
               period_number: p + 1,
               subject_name: cell.subject,
-              teacher_id: cell.teacherId || undefined,
-              teacher_name: cell.teacherName || undefined,
+              teacher_id: cell.teacherId || null, 
+              teacher_name: cell.teacherName || null,
             });
           }
         }
       }
 
       const payload = {
+        academic_year_id: currentYear?.id, 
         class_id: selectedClassId,
         section_id: selectedSectionId,
         entries,
       };
 
       try {
-        await api.post("/timetable", payload);
-      } catch {
-        try {
-          await api.put("/timetable", payload);
-        } catch {
-          await api.patch("/timetable", payload);
+        const res = await api.post("/timetable", payload);
+        return res.data;
+      } catch (err: any) {
+        if (err?.response?.status === 405) {
+          const res = await api.put("/timetable", payload);
+          return res.data;
         }
+        throw err;
       }
     },
     onSuccess: () => {
@@ -378,14 +380,20 @@ export default function TimetablePage() {
       });
     },
     onError: (err: any) => {
-      // CHANGED: Cross-class validation error handling from backend
-      const errMsg = err?.response?.data?.message || err?.response?.data?.error;
+      let errMsg = err?.response?.data?.message || err?.response?.data?.error || err?.response?.data?.detail;
+      
+      if (typeof errMsg === 'object') {
+        if (Array.isArray(errMsg)) {
+           errMsg = errMsg.map((e: any) => e.msg || JSON.stringify(e)).join(", ");
+        } else {
+           errMsg = JSON.stringify(errMsg);
+        }
+      }
+
       if (errMsg) {
-        toast.error(`Teacher Conflict: ${errMsg}`);
+        toast.error(`Save Failed: ${errMsg}`);
       } else {
-        toast.error(
-          "Could not save to server. Please check if the teacher is already assigned in another class for these periods."
-        );
+        toast.error("Could not save to server. Please check your data.");
       }
     },
   });
@@ -481,11 +489,9 @@ export default function TimetablePage() {
     [allStaff]
   );
 
-  // CHANGED: Added Validation logic for "One subject per day"
   const setGridCell = useCallback(
     (day: number, period: number, subjectName: string | null) => {
       if (subjectName) {
-        // Validation: Check if the subject is already assigned on this specific day
         const existingPeriodIndex = grid[day].findIndex(
           (cell) => cell?.subject.toLowerCase() === subjectName.toLowerCase()
         );
@@ -1038,7 +1044,7 @@ export default function TimetablePage() {
                             <span className="text-xs font-semibold text-white">
                               {subj.name}
                             </span>
-                            <span className="text-xs text-gray-500">
+                            <span className="text-xs text-gray-400">
                               ({placed}/{subj.periodsPerWeek})
                             </span>
                           </div>
