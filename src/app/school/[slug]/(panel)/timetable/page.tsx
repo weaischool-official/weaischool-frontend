@@ -1,4 +1,16 @@
-﻿"use client";
+﻿Haan bhai, samajh gaya! Ye ek bohot valid use-case hai. Har class ke liye manually wahi same start/end time aur break set karna bohot tedious ho jata hai. 
+
+Maine aapke code mein ye changes kiye hain:
+1. **Per-Class Scoping:** Timings aur breaks ab pure school pe globally apply hone ki jagah **Class-level** par save honge. (Kyunki ek class ke sabhi sections ki timing mostly same hoti hai).
+2. **Copy/Apply To Feature:** Usi **Timings & Breaks** wale panel mein maine ek **"Copy to other classes"** ka option add kar diya hai. 
+3. Aap apne current class ki timings/breaks set karke, baaki jin bhi classes ko select karenge, unme **sirf timings aur breaks (not subjects)** automatically copy ho jayenge!
+
+Neeche poora updated `page.tsx` code diya gaya hai. Pura copy karke replace kar dijiye.
+
+### Updated `page.tsx`
+
+```tsx
+"use client";
 
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -20,6 +32,7 @@ import {
   Briefcase,
   Check,
   Settings,
+  Copy,
 } from "lucide-react";
 import {
   classApi,
@@ -182,7 +195,7 @@ export default function TimetablePage() {
   const queryClient = useQueryClient();
   const params = useParams();
   const slug = (params?.slug as string) || "school";
-  const STORAGE_KEY = `timetable_periods_${slug}`;
+  const BASE_STORAGE_KEY = `timetable_periods_${slug}`;
 
   // ── Core State ──
   const [activeTab, setActiveTab] = useState(1);
@@ -196,6 +209,10 @@ export default function TimetablePage() {
 
   const [showPeriodConfig, setShowPeriodConfig] = useState(false);
   const [periodConfigs, setPeriodConfigs] = useState<Record<number, PeriodConfig>>({});
+  
+  // States for Copying Timings to other Classes
+  const [isCopyingTimings, setIsCopyingTimings] = useState(false);
+  const [targetClasses, setTargetClasses] = useState<string[]>([]);
 
   // ── Tab 1: Subjects ──
   const [subjects, setSubjects] = useState<SubjectConfig[]>([]);
@@ -212,20 +229,30 @@ export default function TimetablePage() {
   // DATA FETCHING 
   // ═══════════════════════════════════════════════════════
 
-  // Load period configs from local storage so they don't have to re-enter
+  // Load period configs dynamically based on selected class
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!selectedClassId) {
+      setPeriodConfigs({});
+      return;
+    }
+    const saved = localStorage.getItem(`${BASE_STORAGE_KEY}_${selectedClassId}`);
     if (saved) {
       try {
         setPeriodConfigs(JSON.parse(saved));
-      } catch (e) {}
+      } catch (e) {
+        setPeriodConfigs({});
+      }
+    } else {
+      setPeriodConfigs({}); // default empty if nothing saved for this class
     }
-  }, [STORAGE_KEY]);
+  }, [selectedClassId, BASE_STORAGE_KEY]);
 
   const updatePeriodConfig = (p: number, field: keyof PeriodConfig, val: any) => {
     setPeriodConfigs(prev => {
       const next = { ...prev, [p]: { ...(prev[p] || {}), [field]: val } };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      if (selectedClassId) {
+        localStorage.setItem(`${BASE_STORAGE_KEY}_${selectedClassId}`, JSON.stringify(next));
+      }
       return next;
     });
 
@@ -239,6 +266,21 @@ export default function TimetablePage() {
         return next;
       });
     }
+  };
+
+  const handleCopyTimings = () => {
+    if (targetClasses.length === 0) {
+      toast.error("Please select at least one class to copy to.");
+      return;
+    }
+    
+    targetClasses.forEach(clsId => {
+      localStorage.setItem(`${BASE_STORAGE_KEY}_${clsId}`, JSON.stringify(periodConfigs));
+    });
+    
+    toast.success(`Timings and breaks successfully copied to ${targetClasses.length} class(es)!`);
+    setIsCopyingTimings(false);
+    setTargetClasses([]);
   };
 
   // 1. Academic Years
@@ -309,7 +351,7 @@ export default function TimetablePage() {
     setSelectedSectionId("");
   }, [selectedClassId]); 
 
-  // ── Populate grid + subjects from existing timetable (BUG FIXED) ──
+  // ── Populate grid + subjects from existing timetable ──
   useEffect(() => {
     if (!timetableRaw) return;
     const entries = extractArray(timetableRaw) as unknown as TimetableEntry[];
@@ -347,7 +389,6 @@ export default function TimetablePage() {
         const tId = entry.teacher_id || "";
         const tName = entry.teacher_name || "";
         
-        // BUG FIX: Strictly use existing color if subject is already in map, otherwise assign new color
         let finalColorBg = "";
         let finalColorIndex = 0;
         
@@ -1059,16 +1100,63 @@ export default function TimetablePage() {
                 <>
                   {/* TIMINGS CONFIGURATION PANEL */}
                   {showPeriodConfig && (
-                    <div className="bg-gray-900/90 border border-blue-500/30 rounded-xl p-5 shadow-2xl animate-in fade-in slide-in-from-top-4">
+                    <div className="bg-gray-900/90 border border-blue-500/30 rounded-xl p-5 shadow-2xl animate-in fade-in slide-in-from-top-4 mb-6">
                       <div className="flex justify-between items-center mb-5 border-b border-gray-800 pb-3">
                         <h3 className="text-white font-bold flex items-center gap-2">
                           <Settings className="w-5 h-5 text-blue-400" />
                           Configure Period Timings & Breaks
                         </h3>
-                        <button onClick={() => setShowPeriodConfig(false)} className="text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 p-1.5 rounded-lg transition-colors">
-                          <X className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center gap-3">
+                          <button 
+                            onClick={() => setIsCopyingTimings(!isCopyingTimings)} 
+                            className={`text-sm px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 border ${isCopyingTimings ? 'bg-blue-600/20 text-blue-400 border-blue-500/30' : 'bg-gray-800 hover:bg-gray-700 text-gray-300 border-gray-700'}`}
+                          >
+                            <Copy className="w-4 h-4" />
+                            Copy to other classes
+                          </button>
+                          <button onClick={() => setShowPeriodConfig(false)} className="text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 p-1.5 rounded-lg transition-colors">
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
+
+                      {/* Copy Timings Options */}
+                      {isCopyingTimings && (
+                        <div className="mb-6 p-4 bg-gray-950 border border-blue-500/30 rounded-xl animate-in fade-in zoom-in-95">
+                          <h4 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+                            Select classes to copy these timings & breaks to:
+                            <span className="text-xs text-gray-500 font-normal">(Subjects will NOT be copied)</span>
+                          </h4>
+                          <div className="flex flex-wrap gap-3 mb-4">
+                            {classes.filter(c => c.id !== selectedClassId).map(c => (
+                              <label key={c.id} className={`flex items-center gap-2 text-sm cursor-pointer px-3 py-2 rounded-lg border transition-colors ${targetClasses.includes(c.id) ? 'bg-blue-600/10 border-blue-500 text-blue-300' : 'bg-gray-900 border-gray-800 text-gray-400 hover:border-gray-700'}`}>
+                                <input 
+                                  type="checkbox" 
+                                  checked={targetClasses.includes(c.id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) setTargetClasses(prev => [...prev, c.id]);
+                                    else setTargetClasses(prev => prev.filter(id => id !== c.id));
+                                  }}
+                                  className="w-4 h-4 rounded bg-gray-900 border-gray-700 text-blue-500 focus:ring-blue-500 focus:ring-offset-gray-950"
+                                />
+                                {c.name}
+                              </label>
+                            ))}
+                            {classes.filter(c => c.id !== selectedClassId).length === 0 && (
+                              <span className="text-sm text-gray-500 italic">No other classes available to copy to.</span>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={handleCopyTimings} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold rounded-lg transition-colors">
+                              Confirm & Copy
+                            </button>
+                            <button onClick={() => setIsCopyingTimings(false)} className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm font-medium rounded-lg transition-colors">
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                         {activePeriods.map(p => (
                           <div key={p} className={`bg-gray-950 border rounded-xl p-4 space-y-3 transition-colors ${periodConfigs[p]?.isBreak ? 'border-amber-500/50 shadow-[0_0_10px_rgba(245,158,11,0.1)]' : 'border-gray-800'}`}>
@@ -1380,3 +1468,4 @@ export default function TimetablePage() {
     </div>
   );
 }
+```
