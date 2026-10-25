@@ -1,16 +1,4 @@
-﻿Haan bhai, samajh gaya! Ye ek bohot valid use-case hai. Har class ke liye manually wahi same start/end time aur break set karna bohot tedious ho jata hai. 
-
-Maine aapke code mein ye changes kiye hain:
-1. **Per-Class Scoping:** Timings aur breaks ab pure school pe globally apply hone ki jagah **Class-level** par save honge. (Kyunki ek class ke sabhi sections ki timing mostly same hoti hai).
-2. **Copy/Apply To Feature:** Usi **Timings & Breaks** wale panel mein maine ek **"Copy to other classes"** ka option add kar diya hai. 
-3. Aap apne current class ki timings/breaks set karke, baaki jin bhi classes ko select karenge, unme **sirf timings aur breaks (not subjects)** automatically copy ho jayenge!
-
-Neeche poora updated `page.tsx` code diya gaya hai. Pura copy karke replace kar dijiye.
-
-### Updated `page.tsx`
-
-```tsx
-"use client";
+﻿"use client";
 
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
