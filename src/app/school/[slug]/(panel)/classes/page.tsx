@@ -66,9 +66,10 @@ function asItems<T>(data: unknown): T[] {
   return [];
 }
 
+// BUG FIX: Added optional class_id and academic_year_id to body signature
 async function createSection(
   classId: string,
-  body: { name: string; max_students: number }
+  body: { name: string; max_students: number; class_id?: string; academic_year_id?: string }
 ): Promise<SectionItem> {
   try {
     const { data } = await sectionApi.create(classId, body);
@@ -94,6 +95,9 @@ function AddSectionModal({
       createSection(classItem.id, {
         name: name.trim().toUpperCase(),
         max_students: maxStudents,
+        // BUG FIX: Explicitly passing class_id and academic_year_id to prevent database constraint violation
+        class_id: classItem.id,
+        academic_year_id: classItem.academic_year_id,
       }),
     onSuccess: () => {
       toast.success(`Section ${name.toUpperCase()} added to ${classItem.name}!`);
@@ -261,11 +265,15 @@ function BulkSectionsModal({
     const total = selectedIds.length * count;
 
     for (const classId of selectedIds) {
+      const cls = classes.find(c => c.id === classId);
       for (let i = 0; i < count; i++) {
         try {
           await createSection(classId, {
             name: sectionNames[i],
             max_students: maxStudents,
+            // BUG FIX: Explicitly passing class_id and academic_year_id to prevent database constraint violation
+            class_id: classId,
+            academic_year_id: cls?.academic_year_id,
           });
           created++;
         } catch {
