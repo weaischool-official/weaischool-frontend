@@ -231,7 +231,7 @@ export default function TimetablePage() {
         setPeriodConfigs({});
       }
     } else {
-      setPeriodConfigs({}); // default empty if nothing saved for this class
+      setPeriodConfigs({});
     }
   }, [selectedClassId, BASE_STORAGE_KEY]);
 
@@ -244,7 +244,6 @@ export default function TimetablePage() {
       return next;
     });
 
-    // If marked as break, clear any dropped subjects in that row automatically
     if (field === "isBreak" && val === true) {
       setGrid(prev => {
         const next = prev.map(r => [...r]);
@@ -298,6 +297,9 @@ export default function TimetablePage() {
   });
   const sections = asItems<SectionItem>(sectionsData);
 
+  // SMART LOGIC: If a class has no sections, we don't block the UI
+  const hasSelection = !!selectedClassId && !sectionsLoading && (!!selectedSectionId || sections.length === 0);
+
   // 4. Staff 
   const { data: staffRaw, isLoading: staffLoading } = useQuery({
     queryKey: ["staff-list", "timetable"],
@@ -313,18 +315,17 @@ export default function TimetablePage() {
     queryKey: ["timetable", selectedClassId, selectedSectionId],
     queryFn: async () => {
       try {
-        const res = await api.get("/timetable/grid", {
-          params: {
-            class_id: selectedClassId,
-            section_id: selectedSectionId,
-          },
-        });
+        const queryParams: Record<string, string> = { class_id: selectedClassId };
+        if (selectedSectionId) {
+          queryParams.section_id = selectedSectionId;
+        }
+        const res = await api.get("/timetable/grid", { params: queryParams });
         return res.data;
       } catch {
         return [];
       }
     },
-    enabled: !!selectedClassId && !!selectedSectionId,
+    enabled: hasSelection,
   });
 
   // Force clear local state whenever Class OR Section dropdown changes
@@ -440,7 +441,7 @@ export default function TimetablePage() {
       const payload = {
         academic_year_id: currentYear?.id, 
         class_id: selectedClassId,
-        section_id: selectedSectionId,
+        section_id: selectedSectionId || null, // null if no section is selected
         entries,
         slots: entries.map(e => ({
           day_of_week: DAYS[e.day_of_week].toUpperCase(),
@@ -581,7 +582,6 @@ export default function TimetablePage() {
 
   const setGridCell = useCallback(
     (day: number, period: number, subjectName: string | null) => {
-      // Prevent dropping if this row is marked as a break
       if (periodConfigs[period + 1]?.isBreak) {
         toast.error("Cannot assign subject to a Break period!");
         return;
@@ -629,7 +629,6 @@ export default function TimetablePage() {
 
   const selectedClassName = classes.find((c) => c.id === selectedClassId)?.name || "";
   const selectedSectionName = sections.find((s) => s.id === selectedSectionId)?.name || "";
-  const hasSelection = !!selectedClassId && !!selectedSectionId;
 
   const assignedSubjects = subjects.filter((s) => s.teacherId);
   const unassignedSubjects = subjects.filter((s) => !s.teacherId);
@@ -680,7 +679,8 @@ export default function TimetablePage() {
             {hasSelection && (
               <>
                 {" "}
-                · {selectedClassName} · Section {selectedSectionName}
+                · {selectedClassName}{" "}
+                {selectedSectionId ? `· Section ${selectedSectionName}` : "· Class Level (No Section)"}
               </>
             )}
           </p>
@@ -745,9 +745,9 @@ export default function TimetablePage() {
                 Loading sections...
               </div>
             ) : sections.length === 0 ? (
-              <div className="px-4 py-3 bg-gray-950 border border-yellow-500/30 rounded-xl text-yellow-400 text-sm flex items-center gap-2">
-                <AlertCircle className="w-4 h-4" />
-                No sections created. Add in Classes page.
+              <div className="px-4 py-3 bg-gray-950 border border-blue-500/30 rounded-xl text-blue-400 text-sm flex items-center gap-2">
+                <Check className="w-4 h-4" />
+                No sections needed. Proceeding with Class level.
               </div>
             ) : (
               <select
@@ -772,10 +772,10 @@ export default function TimetablePage() {
         <div className="bg-gray-900/80 border border-gray-800 rounded-2xl p-12 text-center">
           <Calendar className="w-16 h-16 text-gray-700 mx-auto mb-4" />
           <h3 className="text-xl font-bold text-white mb-2">
-            Select Class & Section
+            Select Class {sections.length > 0 ? "& Section" : ""}
           </h3>
           <p className="text-gray-400">
-            Choose a class and section above to start building the timetable.
+            Choose a class {sections.length > 0 ? "and section " : ""}above to start building the timetable.
           </p>
         </div>
       )}
