@@ -212,24 +212,33 @@ export const classApi = {
 };
 
 // ═══════════════════════════════════════════════════════════
-// SECTIONS APIs
+// SECTIONS APIs  ✅ FIXED — correct backend endpoints
 // ═══════════════════════════════════════════════════════════
 export const sectionApi = {
+  // Backend: GET /sections?class_id=...
   listByClass: (classId: string) =>
-    api.get(`/classes/${classId}/sections`),
+    api.get(`/sections`, { params: { class_id: classId } }),
+
+  // Backend: POST /sections  (body must include class_id, name, max_students/max_capacity)
   create: (
     classId: string,
     data: {
       name: string;
       max_students: number;
       medium?: string;
+      class_id?: string;
+      academic_year_id?: string;
     }
   ) =>
-    api.post(`/classes/${classId}/sections`, {
+    api.post(`/sections`, {
       class_id: classId,
-      medium: data.medium || "english",
-      ...data,
+      name: data.name,
+      max_students: data.max_students,
+      max_capacity: data.max_students,
+      capacity: data.max_students,
     }),
+
+  // Backend: DELETE /sections/{section_id}
   delete: (sectionId: string) => api.delete(`/sections/${sectionId}`),
 };
 
