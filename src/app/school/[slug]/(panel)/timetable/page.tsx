@@ -17,7 +17,6 @@ import {
   X,
   AlertCircle,
   GripVertical,
-  Briefcase,
   Check,
   Settings,
   Copy,
@@ -26,6 +25,7 @@ import {
   classApi,
   academicYearApi,
   sectionApi,
+  timetableApi,
 } from "@/lib/api";
 import api from "@/lib/api";
 
@@ -148,7 +148,7 @@ function extractArray(data: unknown): Array<Record<string, unknown>> {
   if (!data) return [];
   if (Array.isArray(data)) return data as Array<Record<string, unknown>>;
   const r = data as Record<string, unknown>;
-  for (const key of ["items", "staff", "users", "results", "data", "entries", "slots", "timetable"]) {
+  for (const key of ["items", "staff", "users", "results", "data", "entries", "slots", "timetable", "schedule"]) {
     const val = r[key];
     if (Array.isArray(val)) return val as Array<Record<string, unknown>>;
   }
@@ -310,16 +310,12 @@ export default function TimetablePage() {
   });
   const allStaff = useMemo(() => extractArray(staffRaw) as StaffMember[], [staffRaw]);
 
-  // 5. Existing Timetable
+  // 5. Existing Timetable (Using correct timetableApi method)
   const { data: timetableRaw, isLoading: timetableLoading, isFetching: timetableFetching } = useQuery({
     queryKey: ["timetable", selectedClassId, selectedSectionId],
     queryFn: async () => {
       try {
-        const queryParams: Record<string, string> = { class_id: selectedClassId };
-        if (selectedSectionId) {
-          queryParams.section_id = selectedSectionId;
-        }
-        const res = await api.get("/timetable/grid", { params: queryParams });
+        const res = await timetableApi.get(selectedClassId, selectedSectionId || null);
         return res.data;
       } catch {
         return [];
@@ -417,7 +413,7 @@ export default function TimetablePage() {
 
 
   // ═══════════════════════════════════════════════════════
-  // SAVE MUTATION
+  // SAVE MUTATION (Using correct timetableApi method)
   // ═══════════════════════════════════════════════════════
 
   const saveMutation = useMutation({
@@ -441,7 +437,7 @@ export default function TimetablePage() {
       const payload = {
         academic_year_id: currentYear?.id, 
         class_id: selectedClassId,
-        section_id: selectedSectionId || null, // null if no section is selected
+        section_id: selectedSectionId || null,
         entries,
         slots: entries.map(e => ({
           day_of_week: DAYS[e.day_of_week].toUpperCase(),
@@ -452,16 +448,8 @@ export default function TimetablePage() {
         }))
       };
 
-      try {
-        const res = await api.post("/timetable/save", payload);
-        return res.data;
-      } catch (err: any) {
-        if (err?.response?.status === 405) {
-          const res = await api.put("/timetable/save", payload);
-          return res.data;
-        }
-        throw err;
-      }
+      const res = await timetableApi.save(payload);
+      return res.data;
     },
     onSuccess: () => {
       toast.success("Timetable saved successfully!");

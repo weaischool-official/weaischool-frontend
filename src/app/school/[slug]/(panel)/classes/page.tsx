@@ -41,8 +41,10 @@ interface AcademicYear {
 interface SectionItem {
   id: string;
   name: string;
-  max_students: number;
-  current_strength: number;
+  max_students?: number;
+  max_capacity?: number;
+  student_count?: number;
+  current_strength?: number;
 }
 
 function apiMsg(err: unknown, fallback: string) {
@@ -66,7 +68,7 @@ function asItems<T>(data: unknown): T[] {
   return [];
 }
 
-// BUG FIX: Added optional class_id and academic_year_id to body signature
+// BULK & INDIVIDUAL SECTION CREATE WRAPPER
 async function createSection(
   classId: string,
   body: { name: string; max_students: number; class_id?: string; academic_year_id?: string }
@@ -95,7 +97,6 @@ function AddSectionModal({
       createSection(classItem.id, {
         name: name.trim().toUpperCase(),
         max_students: maxStudents,
-        // BUG FIX: Explicitly passing class_id and academic_year_id to prevent database constraint violation
         class_id: classItem.id,
         academic_year_id: classItem.academic_year_id,
       }),
@@ -265,13 +266,12 @@ function BulkSectionsModal({
     const total = selectedIds.length * count;
 
     for (const classId of selectedIds) {
-      const cls = classes.find(c => c.id === classId);
+      const cls = classes.find((c) => c.id === classId);
       for (let i = 0; i < count; i++) {
         try {
           await createSection(classId, {
             name: sectionNames[i],
             max_students: maxStudents,
-            // BUG FIX: Explicitly passing class_id and academic_year_id to prevent database constraint violation
             class_id: classId,
             academic_year_id: cls?.academic_year_id,
           });
@@ -546,7 +546,7 @@ function SectionsPanel({ cls }: { cls: ClassItem }) {
             <div>
               <p className="text-xs font-semibold text-white">Section {sec.name}</p>
               <p className="text-xs text-gray-500">
-                {sec.current_strength || 0}/{sec.max_students} students
+                {sec.student_count || sec.current_strength || 0}/{sec.max_students || sec.max_capacity || 40} students
               </p>
             </div>
           </div>

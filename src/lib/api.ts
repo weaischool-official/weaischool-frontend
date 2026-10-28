@@ -212,14 +212,12 @@ export const classApi = {
 };
 
 // ═══════════════════════════════════════════════════════════
-// SECTIONS APIs  ✅ FIXED — correct backend endpoints
+// SECTIONS APIs
 // ═══════════════════════════════════════════════════════════
 export const sectionApi = {
-  // Backend: GET /sections?class_id=...
   listByClass: (classId: string) =>
     api.get(`/sections`, { params: { class_id: classId } }),
 
-  // Backend: POST /sections  (body must include class_id, name, max_students/max_capacity)
   create: (
     classId: string,
     data: {
@@ -236,10 +234,30 @@ export const sectionApi = {
       max_students: data.max_students,
       max_capacity: data.max_students,
       capacity: data.max_students,
+      academic_year_id: data.academic_year_id || null, // FIX: Added Academic Year ID
     }),
 
-  // Backend: DELETE /sections/{section_id}
   delete: (sectionId: string) => api.delete(`/sections/${sectionId}`),
+};
+
+// ═══════════════════════════════════════════════════════════
+// SUBJECTS APIs (Required for Timetable Builder)
+// ═══════════════════════════════════════════════════════════
+export const subjectApi = {
+  list: () => api.get("/subjects"),
+  create: (data: { name: string; code?: string; type?: string }) =>
+    api.post("/subjects", data),
+};
+
+// ═══════════════════════════════════════════════════════════
+// TIMETABLE APIs (Required for Smart Timetable Builder)
+// ═══════════════════════════════════════════════════════════
+export const timetableApi = {
+  get: (classId: string, sectionId?: string | null) =>
+    api.get("/timetables", {
+      params: { class_id: classId, section_id: sectionId || undefined },
+    }),
+  save: (data: Record<string, unknown>) => api.post("/timetables", data),
 };
 
 // ═══════════════════════════════════════════════════════════
