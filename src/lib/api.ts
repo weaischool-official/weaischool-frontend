@@ -37,7 +37,7 @@ api.interceptors.request.use(
     if (typeof window !== "undefined") {
       const token = getAccessToken();
       if (token && token !== "undefined" && token !== "null") {
-        config.headers.Authorization = Bearer  + token;
+        config.headers.Authorization = `Bearer ${token}`;
       }
 
       // Auto-attach tenant context (from URL /school/[slug]/...)
@@ -48,7 +48,7 @@ api.interceptors.request.use(
         config.headers["X-Tenant-Slug"] = tenantSlug;
 
         const tenantId =
-          localStorage.getItem(	enant_id_ + tenantSlug) ||
+          localStorage.getItem(`tenant_id_${tenantSlug}`) ||
           localStorage.getItem("tenant_id") ||
           localStorage.getItem("tenantId");
 
@@ -79,7 +79,7 @@ api.interceptors.response.use(
   async (error: AxiosError) => {
     if (error.response?.status === 401) {
       console.warn(
-        [API Client] 401 Warning on  + error.config?.url +  — Session preserved in storage.
+        `[API Client] 401 Warning on ${error.config?.url} — Session preserved in storage.`
       );
     }
     // NEVER wipe localStorage or call window.location.href here!
@@ -121,19 +121,19 @@ export const tenantApi = {
       params: { page, per_page: perPage, search },
     }),
 
-  get: (id: string) => api.get(/tenants/ + id),
+  get: (id: string) => api.get(`/tenants/${id}`),
 
   create: (data: Record<string, unknown>) => api.post("/tenants", data),
 
   update: (id: string, data: Record<string, unknown>) =>
-    api.put(/tenants/ + id, data),
+    api.put(`/tenants/${id}`, data),
 
   updateStatus: (id: string, status: string) =>
-    api.patch(/tenants/ + id + /status, { status }),
+    api.patch(`/tenants/${id}/status`, { status }),
 
-  delete: (id: string) => api.delete(/tenants/ + id),
+  delete: (id: string) => api.delete(`/tenants/${id}`),
 
-  getBySlug: (slug: string) => api.get(/tenants/slug/ + slug),
+  getBySlug: (slug: string) => api.get(`/tenants/slug/${slug}`),
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -154,7 +154,7 @@ export const godModeApi = {
   systemVersion: () => api.get("/god-mode/system/version"),
   dbTables: () => api.get("/god-mode/db/tables"),
   browseTable: (tableName: string, page = 1, perPage = 50) =>
-    api.get(/god-mode/db/table/ + tableName, {
+    api.get(`/god-mode/db/table/${tableName}`, {
       params: { page, per_page: perPage },
     }),
   runSqlQuery: (query: string) =>
@@ -162,22 +162,22 @@ export const godModeApi = {
   redisKeys: (pattern = "*") =>
     api.get("/god-mode/redis/keys", { params: { pattern } }),
   getRedisValue: (key: string) =>
-    api.get(/god-mode/redis/key/ + encodeURIComponent(key)),
+    api.get(`/god-mode/redis/key/${encodeURIComponent(key)}`),
   deleteRedisKey: (key: string) =>
-    api.delete(/god-mode/redis/key/ + encodeURIComponent(key)),
+    api.delete(`/god-mode/redis/key/${encodeURIComponent(key)}`),
   flushRedis: () => api.post("/god-mode/redis/flush"),
   listFiles: (path = "") =>
     api.get("/god-mode/files", { params: { path } }),
   deleteFile: (filePath: string) =>
-    api.delete(/god-mode/files/ + encodeURIComponent(filePath)),
+    api.delete(`/god-mode/files/${encodeURIComponent(filePath)}`),
   listMigrations: () => api.get("/god-mode/migrations"),
   runMigrations: () => api.post("/god-mode/migrations/run"),
   suspendTenant: (tenantId: string) =>
-    api.post(/god-mode/tenant/ + tenantId + /suspend),
+    api.post(`/god-mode/tenant/${tenantId}/suspend`),
   activateTenant: (tenantId: string) =>
-    api.post(/god-mode/tenant/ + tenantId + /activate),
+    api.post(`/god-mode/tenant/${tenantId}/activate`),
   clearTenantCache: (tenantId: string) =>
-    api.post(/god-mode/cache/clear/ + tenantId),
+    api.post(`/god-mode/cache/clear/${tenantId}`),
   auditLogs: (page = 1, perPage = 50) =>
     api.get("/god-mode/audit-logs", {
       params: { page, per_page: perPage },
@@ -189,13 +189,13 @@ export const godModeApi = {
 // ═══════════════════════════════════════════════════════════
 export const academicYearApi = {
   list: () => api.get("/academic-years"),
-  get: (id: string) => api.get(/academic-years/ + id),
+  get: (id: string) => api.get(`/academic-years/${id}`),
   create: (data: Record<string, unknown>) =>
     api.post("/academic-years", data),
   update: (id: string, data: Record<string, unknown>) =>
-    api.put(/academic-years/ + id, data),
-  delete: (id: string) => api.delete(/academic-years/ + id),
-  setCurrent: (id: string) => api.post(/academic-years/ + id + /set-current),
+    api.put(`/academic-years/${id}`, data),
+  delete: (id: string) => api.delete(`/academic-years/${id}`),
+  setCurrent: (id: string) => api.post(`/academic-years/${id}/set-current`),
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -204,19 +204,19 @@ export const academicYearApi = {
 export const classApi = {
   list: (academicYearId?: string) =>
     api.get("/classes", { params: { academic_year_id: academicYearId } }),
-  get: (id: string) => api.get(/classes/ + id),
+  get: (id: string) => api.get(`/classes/${id}`),
   create: (data: Record<string, unknown>) => api.post("/classes", data),
   update: (id: string, data: Record<string, unknown>) =>
-    api.put(/classes/ + id, data),
-  delete: (id: string) => api.delete(/classes/ + id),
+    api.put(`/classes/${id}`, data),
+  delete: (id: string) => api.delete(`/classes/${id}`),
 };
 
 // ═══════════════════════════════════════════════════════════
-// SECTIONS APIs (FIXED: NOW HITTING /classes/{classId}/sections)
+// SECTIONS APIs
 // ═══════════════════════════════════════════════════════════
 export const sectionApi = {
   listByClass: (classId: string) =>
-    api.get(/classes/ + classId + /sections),
+    api.get(`/classes/${classId}/sections`),
 
   create: (
     classId: string,
@@ -228,7 +228,7 @@ export const sectionApi = {
       academic_year_id?: string;
     }
   ) =>
-    api.post(/classes/ + classId + /sections, {
+    api.post(`/classes/${classId}/sections`, {
       name: data.name,
       max_students: data.max_students,
       max_capacity: data.max_students,
@@ -236,7 +236,7 @@ export const sectionApi = {
       academic_year_id: data.academic_year_id || null,
     }),
 
-  delete: (sectionId: string) => api.delete(/sections/ + sectionId),
+  delete: (sectionId: string) => api.delete(`/sections/${sectionId}`),
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -282,24 +282,24 @@ export const studentApi = {
       },
     }),
 
-  get: (id: string) => api.get(/students/ + id),
+  get: (id: string) => api.get(`/students/${id}`),
 
   create: (data: Record<string, unknown>) => api.post("/students/", data),
 
   update: (id: string, data: Record<string, unknown>) =>
-    api.put(/students/ + id, data),
+    api.put(`/students/${id}`, data),
 
-  delete: (id: string) => api.delete(/students/ + id),
+  delete: (id: string) => api.delete(`/students/${id}`),
 
   uploadPhoto: (id: string, file: File) => {
     const formData = new FormData();
     formData.append("file", file);
-    return api.post(/students/ + id + /photo, formData, {
+    return api.post(`/students/${id}/photo`, formData, {
       headers: { "Content-Type": "multipart/form-data" },
     });
   },
 
-  deletePhoto: (id: string) => api.delete(/students/ + id + /photo),
+  deletePhoto: (id: string) => api.delete(`/students/${id}/photo`),
 
   transfer: (
     id: string,
@@ -308,7 +308,7 @@ export const studentApi = {
       reason?: string;
       transfer_date?: string;
     }
-  ) => api.post(/students/ + id + /transfer, data),
+  ) => api.post(`/students/${id}/transfer`, data),
 
   downloadTemplate: () =>
     api.get("/students/template", { responseType: "blob" }),
@@ -347,10 +347,10 @@ export const studentApi = {
       receives_notifications?: boolean;
       is_fee_payer?: boolean;
     }
-  ) => api.post(/students/ + studentId + /parents, data),
+  ) => api.post(`/students/${studentId}/parents`, data),
 
   getParents: (studentId: string) =>
-    api.get(/students/ + studentId + /parents),
+    api.get(`/students/${studentId}/parents`),
 
   addDocument: (
     studentId: string,
@@ -362,16 +362,16 @@ export const studentApi = {
       mime_type?: string;
       notes?: string;
     }
-  ) => api.post(/students/ + studentId + /documents, data),
+  ) => api.post(`/students/${studentId}/documents`, data),
 
   listDocuments: (studentId: string) =>
-    api.get(/students/ + studentId + /documents),
+    api.get(`/students/${studentId}/documents`),
 
   deleteDocument: (studentId: string, documentId: string) =>
-    api.delete(/students/ + studentId + /documents/ + documentId),
+    api.delete(`/students/${studentId}/documents/${documentId}`),
 
   verifyDocument: (studentId: string, documentId: string) =>
-    api.patch(/students/ + studentId + /documents/ + documentId + /verify),
+    api.patch(`/students/${studentId}/documents/${documentId}/verify`),
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -387,17 +387,17 @@ export const parentApi = {
       },
     }),
 
-  get: (id: string) => api.get(/parents/ + id),
+  get: (id: string) => api.get(`/parents/${id}`),
 
   create: (data: Record<string, unknown>) => api.post("/parents/", data),
 
   update: (id: string, data: Record<string, unknown>) =>
-    api.patch(/parents/ + id, data),
+    api.patch(`/parents/${id}`, data),
 
-  delete: (id: string) => api.delete(/parents/ + id),
+  delete: (id: string) => api.delete(`/parents/${id}`),
 
   findByPhone: (phone: string) =>
-    api.get(/parents/search, { params: { phone } }),
+    api.get(`/parents/search`, { params: { phone } }),
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -408,11 +408,11 @@ export const staffApi = {
     api.get("/staff", {
       params: { page, per_page: perPage, search },
     }),
-  get: (id: string) => api.get(/staff/ + id),
+  get: (id: string) => api.get(`/staff/${id}`),
   create: (data: Record<string, unknown>) => api.post("/staff", data),
   update: (id: string, data: Record<string, unknown>) =>
-    api.put(/staff/ + id, data),
-  delete: (id: string) => api.delete(/staff/ + id),
+    api.put(`/staff/${id}`, data),
+  delete: (id: string) => api.delete(`/staff/${id}`),
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -457,9 +457,9 @@ export const communicationsApi = {
 // HEALTH CHECK APIs
 // ═══════════════════════════════════════════════════════════
 export const healthApi = {
-  check: () => axios.get(API_BASE_URL.replace("/api/v1", "") + /health),
+  check: () => axios.get(`${API_BASE_URL.replace("/api/v1", "")}/health`),
   detailed: () =>
-    axios.get(API_BASE_URL.replace("/api/v1", "") + /health/detailed),
+    axios.get(`${API_BASE_URL.replace("/api/v1", "")}/health/detailed`),
 };
 
 export default api;
