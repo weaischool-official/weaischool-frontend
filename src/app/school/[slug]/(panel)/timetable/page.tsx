@@ -25,7 +25,6 @@ import {
   classApi,
   academicYearApi,
   sectionApi,
-  timetableApi,
 } from "@/lib/api";
 import api from "@/lib/api";
 
@@ -310,12 +309,15 @@ export default function TimetablePage() {
   });
   const allStaff = useMemo(() => extractArray(staffRaw) as StaffMember[], [staffRaw]);
 
-  // 5. Existing Timetable (Using correct timetableApi method)
+  // 5. Existing Timetable (🔥 BUG FIX: Direct explicit API call with proper query params)
   const { data: timetableRaw, isLoading: timetableLoading, isFetching: timetableFetching } = useQuery({
     queryKey: ["timetable", selectedClassId, selectedSectionId],
     queryFn: async () => {
       try {
-        const res = await timetableApi.get(selectedClassId, selectedSectionId || null);
+        const queryParams: any = { class_id: selectedClassId };
+        if (selectedSectionId) queryParams.section_id = selectedSectionId;
+
+        const res = await api.get("/timetable/grid", { params: queryParams });
         return res.data;
       } catch {
         return [];
@@ -413,7 +415,7 @@ export default function TimetablePage() {
 
 
   // ═══════════════════════════════════════════════════════
-  // SAVE MUTATION (Using correct timetableApi method)
+  // SAVE MUTATION (🔥 BUG FIX: Bypassed faulty timetableApi method)
   // ═══════════════════════════════════════════════════════
 
   const saveMutation = useMutation({
@@ -448,7 +450,8 @@ export default function TimetablePage() {
         }))
       };
 
-      const res = await timetableApi.save(payload);
+      // 🔥 DIRECTLY HIT THE EXACT BACKEND ENDPOINT
+      const res = await api.post("/timetable/save", payload);
       return res.data;
     },
     onSuccess: () => {
