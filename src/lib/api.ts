@@ -72,17 +72,89 @@ api.interceptors.request.use(
 );
 
 // ═══════════════════════════════════════════════════════════
-// RESPONSE INTERCEPTOR — SAFE ERROR HANDLING (NO DESTRUCTIVE LOGOUTS)
+// RESPONSE INTERCEPTOR — SILENT TOKEN REFRESH
 // ═══════════════════════════════════════════════════════════
+// A 401 on a request that DID carry a token means the access token expired or
+// was revoked. We then use the refresh token ONCE to get a new pair and retry.
+// Only if that fails is the session really over → clear it and go to login.
+// (A 401 on a request without a token is just rejected, as before, so a
+// hydration race can never log anyone out.)
+
+const AUTH_PATHS_WITHOUT_REFRESH = ["/auth/login", "/auth/refresh", "/auth/logout"];
+const SESSION_KEYS = [
+  "access_token", "token", "userToken", "refresh_token",
+  "user", "user_info", "user_profile", "weaischool-admin-auth",
+];
+
+let refreshInFlight: Promise<string | null> | null = null;
+
+async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = localStorage.getItem("refresh_token");
+  if (!refreshToken || refreshToken === "undefined" || refreshToken === "null") return null;
+  try {
+    // Plain axios (not `api`) so this call never re-enters these interceptors
+    const res = await axios.post(
+      `${API_BASE_URL}/auth/refresh`,
+      { refresh_token: refreshToken },
+      { timeout: 20000, headers: { "Content-Type": "application/json" } }
+    );
+    const { access_token, refresh_token } = res.data || {};
+    if (!access_token) return null;
+    localStorage.setItem("access_token", access_token);
+    localStorage.setItem("token", access_token);
+    if (refresh_token) localStorage.setItem("refresh_token", refresh_token);
+    return access_token as string;
+  } catch {
+    return null;
+  }
+}
+
+/** One refresh at a time: parallel 401s all wait for the same refresh call. */
+export function getFreshAccessToken(): Promise<string | null> {
+  if (!refreshInFlight) {
+    refreshInFlight = refreshAccessToken().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+function endSessionAndGoToLogin() {
+  SESSION_KEYS.forEach((k) => localStorage.removeItem(k));
+  const school = window.location.pathname.match(/^\/school\/([^/]+)/);
+  const target = school ? `/school/${school[1]}/login` : "/login";
+  if (!window.location.pathname.startsWith(target)) {
+    window.location.href = target;
+  }
+}
+
+type RetriableConfig = InternalAxiosRequestConfig & { _retried?: boolean };
+
 api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
-    if (error.response?.status === 401) {
-      console.warn(
-        `[API Client] 401 Warning on ${error.config?.url} — Session preserved in storage.`
-      );
+    const original = error.config as RetriableConfig | undefined;
+    const url = original?.url || "";
+    const isAuthCall = AUTH_PATHS_WITHOUT_REFRESH.some((p) => url.includes(p));
+    const hadToken = Boolean(original?.headers?.Authorization);
+
+    if (
+      typeof window !== "undefined" &&
+      error.response?.status === 401 &&
+      original &&
+      !original._retried &&
+      !isAuthCall &&
+      hadToken
+    ) {
+      original._retried = true;
+      const newToken = await getFreshAccessToken();
+      if (newToken) {
+        original.headers.Authorization = `Bearer ${newToken}`;
+        return api(original);
+      }
+      console.warn("[API Client] Session expired — redirecting to login.");
+      endSessionAndGoToLogin();
     }
-    // NEVER wipe localStorage or call window.location.href here!
     return Promise.reject(error);
   }
 );
@@ -98,7 +170,14 @@ export const authApi = {
       ...(tenant_slug ? { tenant_slug } : {}),
     }),
 
-  logout: () => api.post("/auth/logout").catch(() => null),
+  // Revokes this session's access token AND refresh token on the server
+  logout: () =>
+    api
+      .post("/auth/logout", {
+        refresh_token:
+          (typeof window !== "undefined" && localStorage.getItem("refresh_token")) || undefined,
+      })
+      .catch(() => null),
 
   me: () => api.get("/auth/me"),
 
