@@ -1,5 +1,6 @@
 "use client";
 
+import { authFetch } from "@/lib/api";
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -386,7 +387,7 @@ export default function AddStudentPage() {
   const { data: classesRaw, isLoading: classesLoading, error: classesError } = useQuery({
     queryKey: ["classes-direct", tenantId],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/classes/`, {
+      const res = await authFetch(`${API_BASE}/classes/`, {
         headers: getAuthHeaders(tenantId),
       });
       if (!res.ok) {
@@ -403,7 +404,7 @@ export default function AddStudentPage() {
   const { data: sectionsRaw, isLoading: sectionsLoading } = useQuery({
     queryKey: ["sections-direct", tenantId, form.class_id],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/classes/${form.class_id}/sections`, {
+      const res = await authFetch(`${API_BASE}/classes/${form.class_id}/sections`, {
         headers: getAuthHeaders(tenantId),
       });
       if (!res.ok) return { sections: [] };
@@ -445,7 +446,7 @@ export default function AddStudentPage() {
       console.log("🚀 ═══ CREATING STUDENT ═══");
       console.log("📤 PAYLOAD:", JSON.stringify(payload, null, 2));
       
-      const res = await fetch(`${API_BASE}/students/`, {
+      const res = await authFetch(`${API_BASE}/students/`, {
         method: "POST",
         headers: getAuthHeaders(tenantId),
         body: JSON.stringify(payload),

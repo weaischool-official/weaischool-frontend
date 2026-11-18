@@ -1,5 +1,6 @@
 "use client";
 
+import { authFetch } from "@/lib/api";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -122,7 +123,7 @@ export default function AttendancePage() {
   const { data: classesData } = useQuery({
     queryKey: ["classes", tenantId],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/classes/`, { headers: getAuthHeaders(tenantId) });
+      const res = await authFetch(`${API_BASE}/classes/`, { headers: getAuthHeaders(tenantId) });
       if (!res.ok) return { items: [] };
       return await res.json();
     },
@@ -135,7 +136,7 @@ export default function AttendancePage() {
   const { data: sectionsData } = useQuery({
     queryKey: ["sections", tenantId, selectedClassId],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/classes/${selectedClassId}/sections`, {
+      const res = await authFetch(`${API_BASE}/classes/${selectedClassId}/sections`, {
         headers: getAuthHeaders(tenantId),
       });
       if (!res.ok) return { sections: [] };
@@ -158,7 +159,7 @@ export default function AttendancePage() {
         // Teachers or Staff
         url = `${API_BASE}/staff/?per_page=200`;
       }
-      const res = await fetch(url, { headers: getAuthHeaders(tenantId) });
+      const res = await authFetch(url, { headers: getAuthHeaders(tenantId) });
       if (!res.ok) return { items: [] };
       return await res.json();
     },

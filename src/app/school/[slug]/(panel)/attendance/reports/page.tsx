@@ -1,5 +1,6 @@
 "use client";
 
+import { authFetch } from "@/lib/api";
 import { useState, useMemo, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -87,7 +88,7 @@ export default function AttendanceReportsPage() {
   const { data: classesData, isLoading: classesLoading } = useQuery({
     queryKey: ["classes-report", tenantId],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/classes/`, {
+      const res = await authFetch(`${API_BASE}/classes/`, {
         headers: getAuthHeaders(tenantId),
       });
       if (!res.ok) return { items: [] };

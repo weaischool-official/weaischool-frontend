@@ -1,5 +1,6 @@
 "use client";
 
+import { authFetch } from "@/lib/api";
 import { useParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState, useMemo } from "react";
@@ -81,7 +82,7 @@ export default function SchoolDashboardPage() {
   const { data: studentsData, isLoading: loadingStudents } = useQuery({
     queryKey: ["dash-students", tenantId],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/students/?per_page=1`, {
+      const res = await authFetch(`${API_BASE}/students/?per_page=1`, {
         headers: getAuthHeaders(tenantId),
       });
       if (!res.ok) return { total: 0 };
@@ -93,7 +94,7 @@ export default function SchoolDashboardPage() {
   const { data: staffData, isLoading: loadingStaff } = useQuery({
     queryKey: ["dash-staff", tenantId],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/staff/?per_page=1`, {
+      const res = await authFetch(`${API_BASE}/staff/?per_page=1`, {
         headers: getAuthHeaders(tenantId),
       });
       if (!res.ok) return { total: 0 };
@@ -105,7 +106,7 @@ export default function SchoolDashboardPage() {
   const { data: classesData, isLoading: loadingClasses } = useQuery({
     queryKey: ["dash-classes", tenantId],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/classes/`, {
+      const res = await authFetch(`${API_BASE}/classes/`, {
         headers: getAuthHeaders(tenantId),
       });
       if (!res.ok) return { items: [] };

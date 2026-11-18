@@ -1,5 +1,6 @@
 "use client";
 
+import { authFetch } from "@/lib/api";
 import { useState, useEffect, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -71,7 +72,7 @@ export default function StaffDetailPage() {
   const { data: staffData, isLoading, refetch } = useQuery({
     queryKey: ["staff-detail", staffId, tenantId],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/staff/${staffId}`, { headers: getAuthHeaders(tenantId) });
+      const res = await authFetch(`${API_BASE}/staff/${staffId}`, { headers: getAuthHeaders(tenantId) });
       if (!res.ok) throw new Error(`Failed: ${res.status}`);
       return await res.json();
     },
@@ -82,7 +83,7 @@ export default function StaffDetailPage() {
   const { data: classesData } = useQuery({
     queryKey: ["classes", tenantId],
     queryFn: async () => {
-      const res = await fetch(`${API_BASE}/classes`, { headers: getAuthHeaders(tenantId) });
+      const res = await authFetch(`${API_BASE}/classes`, { headers: getAuthHeaders(tenantId) });
       if (!res.ok) return [];
       return await res.json();
     },
@@ -97,7 +98,7 @@ export default function StaffDetailPage() {
     }
     const fetchSuggestions = async () => {
       try {
-        const res = await fetch(`${API_BASE}/class-subjects/suggestions?query=${subjectInput}`, {
+        const res = await authFetch(`${API_BASE}/class-subjects/suggestions?query=${subjectInput}`, {
           headers: getAuthHeaders(tenantId)
         });
         const data = await res.json();
@@ -243,7 +244,7 @@ export default function StaffDetailPage() {
       };
 
       // Try PATCH first
-      let res = await fetch(`${API_BASE}/staff/${staffId}`, {
+      let res = await authFetch(`${API_BASE}/staff/${staffId}`, {
         method: "PATCH",
         headers: getAuthHeaders(tenantId),
         body: JSON.stringify(payload),
@@ -251,7 +252,7 @@ export default function StaffDetailPage() {
 
       // If PATCH is not allowed for some reason, fallback to PUT
       if (res.status === 405) {
-        res = await fetch(`${API_BASE}/staff/${staffId}`, {
+        res = await authFetch(`${API_BASE}/staff/${staffId}`, {
           method: "PUT",
           headers: getAuthHeaders(tenantId),
           body: JSON.stringify(payload),
@@ -278,7 +279,7 @@ export default function StaffDetailPage() {
 
   const deleteMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`${API_BASE}/staff/${staffId}`, {
+      const res = await authFetch(`${API_BASE}/staff/${staffId}`, {
         method: "DELETE",
         headers: getAuthHeaders(tenantId),
       });

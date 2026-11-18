@@ -159,6 +159,27 @@ api.interceptors.response.use(
   }
 );
 
+/**
+ * Drop-in replacement for fetch() for pages that call the API directly:
+ * on a 401 for a request that carried a real token it refreshes once and
+ * retries, exactly like the axios interceptor above.
+ */
+export async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const res = await fetch(input, init);
+  const auth = new Headers(init.headers).get("Authorization") || "";
+  const hadToken = /^Bearer\s+(?!null$|undefined$)\S+$/.test(auth);
+  if (res.status !== 401 || typeof window === "undefined" || !hadToken) return res;
+
+  const newToken = await getFreshAccessToken();
+  if (!newToken) {
+    endSessionAndGoToLogin();
+    return res;
+  }
+  const headers = new Headers(init.headers);
+  headers.set("Authorization", `Bearer ${newToken}`);
+  return fetch(input, { ...init, headers });
+}
+
 // ═══════════════════════════════════════════════════════════
 // AUTHENTICATION APIs
 // ═══════════════════════════════════════════════════════════
