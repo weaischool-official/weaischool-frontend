@@ -749,7 +749,7 @@ export default function TimetablePage() {
                 <option value="">-- Choose a section --</option>
                 {sections.map((sec) => (
                   <option key={sec.id} value={sec.id}>
-                    Section {sec.name} ({sec.current_strength || 0}/
+                    {sec.name ? `Section ${sec.name}` : "Whole class"} ({sec.current_strength || 0}/
                     {sec.max_students} students)
                   </option>
                 ))}

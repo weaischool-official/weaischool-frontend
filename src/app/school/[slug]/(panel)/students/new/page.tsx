@@ -1249,7 +1249,7 @@ export default function AddStudentPage() {
                     <option value="">-- Select Section --</option>
                     {sections.map((sec) => (
                       <option key={String(sec.id)} value={String(sec.id)}>
-                        Section {String(sec.name || sec.section_name || "")}
+                        {sec.name || sec.section_name ? `Section ${String(sec.name || sec.section_name)}` : "Whole class"}
                       </option>
                     ))}
                   </select>

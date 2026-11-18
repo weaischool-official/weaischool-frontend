@@ -241,10 +241,14 @@ function BulkImportContent() {
                 <span className="text-white font-medium">
                   {classInfo.name}
                 </span>{" "}
-                — Section{" "}
-                <span className="text-white font-medium">
-                  {sectionInfo.name}
-                </span>
+                {sectionInfo.name ? (
+                  <>
+                    — Section{" "}
+                    <span className="text-white font-medium">{sectionInfo.name}</span>
+                  </>
+                ) : (
+                  "(whole class)"
+                )}
               </>
             )}
             {classInfo && !sectionInfo && (

@@ -662,8 +662,8 @@ export default function StaffDetailPage() {
                             return (
                               <optgroup key={cls.id} label={`📂 ${cls.name}`} className="bg-slate-800 text-slate-300 font-bold">
                                 {cls.sections.map((sec: any) => (
-                                  <option key={sec.id} value={`${cls.name} - ${sec.name}`} className="text-white font-normal bg-slate-900">
-                                    ↳ {cls.name} (Section {sec.name})
+                                  <option key={sec.id} value={sec.name ? `${cls.name} - ${sec.name}` : cls.name} className="text-white font-normal bg-slate-900">
+                                    ↳ {cls.name} ({sec.name ? `Section ${sec.name}` : "Whole class"})
                                   </option>
                                 ))}
                               </optgroup>

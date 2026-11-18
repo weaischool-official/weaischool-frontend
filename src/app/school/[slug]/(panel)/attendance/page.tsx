@@ -422,7 +422,7 @@ export default function AttendancePage() {
                     {!selectedClassId ? "Select class first" : "-- Select Section --"}
                   </option>
                   {sections.map((s: any) => (
-                    <option key={s.id} value={s.id}>Section {s.name}</option>
+                    <option key={s.id} value={s.id}>{s.name ? `Section ${s.name}` : "Whole class"}</option>
                   ))}
                 </select>
               </div>

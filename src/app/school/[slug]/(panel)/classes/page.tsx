@@ -47,6 +47,8 @@ interface SectionItem {
   student_count?: number;
   current_strength?: number;
   class_teacher?: { staff_id: string; name: string; source: "manual" | "timetable" } | null;
+  /** hidden section that lets a class without sections hold students */
+  is_main?: boolean;
 }
 
 function apiMsg(err: unknown, fallback: string) {
@@ -503,11 +505,20 @@ function SectionCard({
   cls,
   sec,
   teachers,
+  hasRealSections = false,
 }: {
   cls: ClassItem;
   sec: SectionItem;
   teachers: TeacherOption[];
+  hasRealSections?: boolean;
 }) {
+  const isMain = !!sec.is_main;
+  const title = isMain ? (hasRealSections ? `${cls.name} – Not in a section` : cls.name) : `${cls.name} – ${sec.name}`;
+  const subtitle = isMain
+    ? hasRealSections
+      ? "Move these students into a section from the Students page"
+      : "Whole class · no sections"
+    : `Section ${sec.name}`;
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [choice, setChoice] = useState(sec.class_teacher?.staff_id ?? "");
@@ -540,15 +551,14 @@ function SectionCard({
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 bg-purple-500/10 rounded-xl flex items-center justify-center text-purple-300 font-bold text-lg">
-            {sec.name}
+            {isMain ? <BookOpen className="w-6 h-6 text-purple-400" /> : sec.name}
           </div>
           <div>
-            <h3 className="text-lg font-bold text-white">
-              {cls.name} – {sec.name}
-            </h3>
-            <p className="text-xs text-gray-500">Section {sec.name}</p>
+            <h3 className="text-lg font-bold text-white">{title}</h3>
+            <p className="text-xs text-gray-500">{subtitle}</p>
           </div>
         </div>
+        {!isMain && (
         <button
           type="button"
           aria-label={`Delete ${cls.name} section ${sec.name}`}
@@ -560,6 +570,7 @@ function SectionCard({
         >
           <Trash2 className="w-4 h-4" />
         </button>
+        )}
       </div>
 
       <div className="pt-3 border-t border-gray-800">
@@ -615,7 +626,7 @@ function SectionCard({
             </div>
           ) : (
             <p className="text-sm text-gray-500">
-              Not assigned — add this section&apos;s Period 1 in the timetable, or click Edit.
+              Not assigned — add Period 1 for this {isMain ? "class" : "section"} in the timetable, or click Edit.
             </p>
           )
         ) : (
@@ -681,7 +692,10 @@ function ClassGroup({
   onAddSection: (c: ClassItem) => void;
   onDelete: (id: string, name: string) => void;
 }) {
-  const sections = [...(cls.sections ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+  const all = cls.sections ?? [];
+  const sections = all.filter((s) => !s.is_main).sort((a, b) => a.name.localeCompare(b.name));
+  const main = all.find((s) => s.is_main);
+  const cards = main ? [main, ...sections] : sections;
 
   return (
     <section aria-labelledby={`class-${cls.id}`} className="space-y-3">
@@ -719,7 +733,7 @@ function ClassGroup({
         </div>
       </div>
 
-      {sections.length === 0 ? (
+      {cards.length === 0 ? (
         <button
           type="button"
           onClick={() => onAddSection(cls)}
@@ -729,8 +743,14 @@ function ClassGroup({
         </button>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {sections.map((sec) => (
-            <SectionCard key={sec.id} cls={cls} sec={sec} teachers={teachers} />
+          {cards.map((sec) => (
+            <SectionCard
+              key={sec.id}
+              cls={cls}
+              sec={sec}
+              teachers={teachers}
+              hasRealSections={sections.length > 0}
+            />
           ))}
         </div>
       )}
