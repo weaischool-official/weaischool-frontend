@@ -337,6 +337,10 @@ export const sectionApi = {
     }),
 
   delete: (sectionId: string) => api.delete(`/sections/${sectionId}`),
+
+  /** staffId null = back to automatic (period-1 teacher from the timetable) */
+  setClassTeacher: (sectionId: string, staffId: string | null) =>
+    api.patch(`/sections/${sectionId}/class-teacher`, { staff_id: staffId }),
 };
 
 // ═══════════════════════════════════════════════════════════

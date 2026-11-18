@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { classApi, academicYearApi, sectionApi } from "@/lib/api";
+import { classApi, academicYearApi, sectionApi, staffApi } from "@/lib/api";
 import { toast } from "sonner";
 import {
   BookOpen,
@@ -15,8 +15,8 @@ import {
   Calendar,
   AlertCircle,
   RefreshCw,
-  ChevronDown,
-  ChevronRight,
+  UserCheck,
+  Pencil,
 } from "lucide-react";
 
 interface ClassItem {
@@ -29,6 +29,7 @@ interface ClassItem {
   display_order?: number;
   total_sections?: number;
   total_students?: number;
+  sections?: SectionItem[];
 }
 
 interface AcademicYear {
@@ -45,6 +46,7 @@ interface SectionItem {
   max_capacity?: number;
   student_count?: number;
   current_strength?: number;
+  class_teacher?: { staff_id: string; name: string; source: "manual" | "timetable" } | null;
 }
 
 function apiMsg(err: unknown, fallback: string) {
@@ -492,174 +494,247 @@ function BulkSectionsModal({
   );
 }
 
-function SectionsPanel({ cls }: { cls: ClassItem }) {
-  const queryClient = useQueryClient();
+interface TeacherOption {
+  id: string;
+  name: string;
+}
 
-  const { data: sections, isLoading } = useQuery({
-    queryKey: ["sections", cls.id],
-    queryFn: async () => {
-      const { data } = await sectionApi.listByClass(cls.id);
-      return asItems<SectionItem>(data);
-    },
-  });
+function SectionCard({
+  cls,
+  sec,
+  teachers,
+}: {
+  cls: ClassItem;
+  sec: SectionItem;
+  teachers: TeacherOption[];
+}) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [choice, setChoice] = useState(sec.class_teacher?.staff_id ?? "");
+  const ct = sec.class_teacher;
+  const strength = sec.student_count ?? sec.current_strength ?? 0;
+  const capacity = sec.max_students ?? sec.max_capacity ?? 40;
+  const fill = Math.min(100, Math.round((strength / (capacity || 1)) * 100));
 
   const deleteMutation = useMutation({
-    mutationFn: (sectionId: string) => sectionApi.delete(sectionId),
+    mutationFn: () => sectionApi.delete(sec.id),
     onSuccess: () => {
-      toast.success("Section deleted");
-      queryClient.invalidateQueries({ queryKey: ["sections", cls.id] });
+      toast.success(`Section ${sec.name} deleted`);
       queryClient.invalidateQueries({ queryKey: ["classes"] });
     },
     onError: (err: unknown) => toast.error(apiMsg(err, "Failed to delete section")),
   });
 
-  const sectionList = sections || [];
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center gap-2 text-xs text-gray-500 py-2 px-1">
-        <Loader2 className="w-3 h-3 animate-spin" />
-        Loading sections...
-      </div>
-    );
-  }
-
-  if (sectionList.length === 0) {
-    return (
-      <p className="text-xs text-gray-600 text-center py-2">
-        No sections yet — click &quot;Add Section&quot;
-      </p>
-    );
-  }
+  const teacherMutation = useMutation({
+    mutationFn: (staffId: string | null) => sectionApi.setClassTeacher(sec.id, staffId),
+    onSuccess: (_res, staffId) => {
+      toast.success(staffId ? "Class teacher updated" : "Class teacher set to automatic (timetable)");
+      setEditing(false);
+      queryClient.invalidateQueries({ queryKey: ["classes"] });
+    },
+    onError: (err: unknown) => toast.error(apiMsg(err, "Failed to update class teacher")),
+  });
 
   return (
-    <div className="grid grid-cols-2 gap-2">
-      {sectionList.map((sec) => (
-        <div
-          key={sec.id}
-          className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-2 flex items-center justify-between"
-        >
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-purple-500/20 rounded-lg flex items-center justify-center text-purple-300 font-bold text-xs">
-              {sec.name}
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-white">Section {sec.name}</p>
-              <p className="text-xs text-gray-500">
-                {sec.student_count || sec.current_strength || 0}/{sec.max_students || sec.max_capacity || 40} students
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            aria-label={`Delete Section ${sec.name}`}
-            onClick={() => {
-              if (confirm(`Delete Section ${sec.name}?`)) {
-                deleteMutation.mutate(sec.id);
-              }
-            }}
-            disabled={deleteMutation.isPending}
-            className="p-1 text-gray-600 hover:text-red-400 hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-40"
-          >
-            <Trash2 className="w-3 h-3" />
-          </button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ClassCard({
-  cls,
-  onAddSection,
-  onDelete,
-}: {
-  cls: ClassItem;
-  onAddSection: (c: ClassItem) => void;
-  onDelete: (id: string, name: string) => void;
-}) {
-  const [showSections, setShowSections] = useState(false);
-
-  return (
-    <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 hover:border-blue-500/40 transition-all">
+    <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5 hover:border-blue-500/40 transition-all flex flex-col">
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-purple-500/10 rounded-xl flex items-center justify-center">
-            <BookOpen className="w-6 h-6 text-purple-400" />
+          <div className="w-12 h-12 bg-purple-500/10 rounded-xl flex items-center justify-center text-purple-300 font-bold text-lg">
+            {sec.name}
           </div>
           <div>
-            <h3 className="text-lg font-bold text-white">{cls.name}</h3>
-            <p className="text-xs text-gray-500">
-              Level: {cls.numeric_level ?? cls.class_level ?? "N/A"}
-            </p>
+            <h3 className="text-lg font-bold text-white">
+              {cls.name} – {sec.name}
+            </h3>
+            <p className="text-xs text-gray-500">Section {sec.name}</p>
           </div>
         </div>
-
         <button
           type="button"
-          aria-label={`Delete class ${cls.name}`}
-          onClick={() => onDelete(cls.id, cls.name)}
-          className="p-2 text-gray-600 hover:text-red-400 hover:bg-gray-800 rounded-lg transition-colors"
+          aria-label={`Delete ${cls.name} section ${sec.name}`}
+          onClick={() => {
+            if (confirm(`Delete ${cls.name} – Section ${sec.name}?`)) deleteMutation.mutate();
+          }}
+          disabled={deleteMutation.isPending}
+          className="p-2 text-gray-600 hover:text-red-400 hover:bg-gray-800 rounded-lg transition-colors disabled:opacity-40"
         >
           <Trash2 className="w-4 h-4" />
         </button>
       </div>
 
-      <div className="flex items-center gap-4 mb-4 pt-3 border-t border-gray-800">
-        <div className="flex items-center gap-1.5 text-sm text-gray-400">
-          <Users className="w-3.5 h-3.5" />
-          <span>
-            <span className="text-white font-semibold">{cls.total_sections ?? 0}</span>{" "}
-            Sections
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5 text-sm text-gray-400">
-          <Users className="w-3.5 h-3.5" />
-          <span>
-            <span className="text-white font-semibold">{cls.total_students ?? 0}</span>{" "}
+      <div className="pt-3 border-t border-gray-800">
+        <div className="flex items-center justify-between text-sm mb-1.5">
+          <span className="flex items-center gap-1.5 text-gray-400">
+            <Users className="w-3.5 h-3.5" />
             Students
           </span>
+          <span className="text-white font-semibold">
+            {strength}
+            <span className="text-gray-500 font-normal"> / {capacity}</span>
+          </span>
+        </div>
+        <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden" aria-hidden="true">
+          <div className="h-full bg-blue-500 rounded-full" style={{ width: `${fill}%` }} />
         </div>
       </div>
 
-      <div className="flex gap-2">
+      <div className="mt-4 pt-3 border-t border-gray-800">
+        <div className="flex items-center justify-between mb-2">
+          <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <UserCheck className="w-3.5 h-3.5" />
+            Class Teacher
+          </span>
+          {!editing && (
+            <button
+              type="button"
+              onClick={() => {
+                setChoice(ct?.staff_id ?? "");
+                setEditing(true);
+              }}
+              className="flex items-center gap-1 text-xs font-semibold text-blue-400 hover:text-blue-300"
+            >
+              <Pencil className="w-3 h-3" />
+              Edit
+            </button>
+          )}
+        </div>
+
+        {!editing ? (
+          ct ? (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-white capitalize">{ct.name}</span>
+              <span
+                className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                  ct.source === "manual"
+                    ? "bg-amber-500/10 text-amber-300"
+                    : "bg-emerald-500/10 text-emerald-300"
+                }`}
+              >
+                {ct.source === "manual" ? "Set manually" : "Auto · Period 1"}
+              </span>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">
+              Not assigned — add this section&apos;s Period 1 in the timetable, or click Edit.
+            </p>
+          )
+        ) : (
+          <div className="space-y-2">
+            <label htmlFor={`ct-${sec.id}`} className="sr-only">
+              Class teacher for {cls.name} {sec.name}
+            </label>
+            <select
+              id={`ct-${sec.id}`}
+              value={choice}
+              onChange={(e) => setChoice(e.target.value)}
+              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-xl text-sm text-white focus:outline-none focus:border-blue-500"
+            >
+              <option value="">— Select teacher —</option>
+              {teachers.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={!choice || teacherMutation.isPending}
+                onClick={() => teacherMutation.mutate(choice)}
+                className="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold disabled:opacity-40"
+              >
+                {teacherMutation.isPending ? "Saving..." : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditing(false)}
+                className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl text-xs font-semibold"
+              >
+                Cancel
+              </button>
+            </div>
+            {ct?.source === "manual" && (
+              <button
+                type="button"
+                disabled={teacherMutation.isPending}
+                onClick={() => teacherMutation.mutate(null)}
+                className="w-full text-xs text-emerald-400 hover:text-emerald-300 py-1"
+              >
+                Use timetable instead (automatic)
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ClassGroup({
+  cls,
+  teachers,
+  onAddSection,
+  onDelete,
+}: {
+  cls: ClassItem;
+  teachers: TeacherOption[];
+  onAddSection: (c: ClassItem) => void;
+  onDelete: (id: string, name: string) => void;
+}) {
+  const sections = [...(cls.sections ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+
+  return (
+    <section aria-labelledby={`class-${cls.id}`} className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-purple-500/10 rounded-xl flex items-center justify-center">
+            <BookOpen className="w-5 h-5 text-purple-400" />
+          </div>
+          <div>
+            <h2 id={`class-${cls.id}`} className="text-lg font-bold text-white">
+              {cls.name}
+            </h2>
+            <p className="text-xs text-gray-500">
+              {sections.length} section{sections.length === 1 ? "" : "s"} · {cls.total_students ?? 0} students
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onAddSection(cls)}
+            className="flex items-center gap-1.5 px-3 py-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded-xl text-xs font-semibold transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add Section
+          </button>
+          <button
+            type="button"
+            aria-label={`Delete class ${cls.name}`}
+            onClick={() => onDelete(cls.id, cls.name)}
+            className="p-2 text-gray-600 hover:text-red-400 hover:bg-gray-800 rounded-lg transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {sections.length === 0 ? (
         <button
           type="button"
           onClick={() => onAddSection(cls)}
-          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded-xl text-xs font-semibold transition-colors"
+          className="w-full border border-dashed border-gray-700 hover:border-blue-500/50 rounded-2xl py-6 text-sm text-gray-500 hover:text-blue-400 transition-colors"
         >
-          <Plus className="w-3.5 h-3.5" />
-          Add Section
+          No sections yet — click to add the first section
         </button>
-
-        {(cls.total_sections ?? 0) > 0 && (
-          <button
-            type="button"
-            onClick={() => setShowSections(!showSections)}
-            aria-expanded={showSections}
-            className="flex items-center justify-center gap-1.5 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded-xl text-xs font-semibold transition-colors"
-          >
-            {showSections ? (
-              <>
-                <ChevronDown className="w-3.5 h-3.5" />
-                Hide
-              </>
-            ) : (
-              <>
-                <ChevronRight className="w-3.5 h-3.5" />
-                View ({cls.total_sections})
-              </>
-            )}
-          </button>
-        )}
-      </div>
-
-      {showSections && (
-        <div className="mt-4 pt-4 border-t border-gray-800">
-          <SectionsPanel cls={cls} />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {sections.map((sec) => (
+            <SectionCard key={sec.id} cls={cls} sec={sec} teachers={teachers} />
+          ))}
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -697,11 +772,26 @@ export default function ClassesPage() {
   });
 
   const classes = asItems<ClassItem>(classesData);
-  const sortedClasses = [...classes].sort((a, b) => {
-    const aL = a.numeric_level ?? a.class_level ?? 0;
-    const bL = b.numeric_level ?? b.class_level ?? 0;
-    return aL - bL;
+  // Natural order (Class 1, 2 … 10, 11, 12) even when numeric_level is not set
+  const sortedClasses = [...classes].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
+  );
+
+  const { data: staffData } = useQuery({
+    queryKey: ["staff-teachers"],
+    queryFn: () => staffApi.list(1, 200).then((r) => r.data),
   });
+  const teachers: TeacherOption[] = asItems<{
+    id: string;
+    first_name: string;
+    last_name?: string | null;
+    full_name?: string | null;
+    staff_type?: string;
+    status?: string;
+  }>(staffData)
+    .filter((s) => (s.staff_type ?? "teaching") === "teaching" && (s.status ?? "active") === "active")
+    .map((s) => ({ id: s.id, name: s.full_name || `${s.first_name} ${s.last_name ?? ""}`.trim() }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const createYearMutation = useMutation({
     mutationFn: () => {
@@ -927,11 +1017,12 @@ export default function ClassesPage() {
       )}
 
       {!isLoading && sortedClasses.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="space-y-8">
           {sortedClasses.map((cls) => (
-            <ClassCard
+            <ClassGroup
               key={cls.id}
               cls={cls}
+              teachers={teachers}
               onAddSection={setAddSectionFor}
               onDelete={(id, name) => {
                 if (confirm(`Delete class "${name}"? This cannot be undone.`)) {
