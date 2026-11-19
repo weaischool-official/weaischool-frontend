@@ -24,6 +24,7 @@ import {
   LogOut,
   Landmark,
   Loader2,
+  MessageSquareWarning,
 } from "lucide-react";
 
 const navItems = [
@@ -37,6 +38,7 @@ const navItems = [
   { href: "exams", label: "Exams & Results", icon: FileText, section: "operations" },
   { href: "timetable", label: "Timetable", icon: Clock, section: "operations" },
   { href: "notices", label: "Notices", icon: Bell, section: "operations" },
+  { href: "complaints", label: "Complaints", icon: MessageSquareWarning, section: "operations" },
   { href: "transport", label: "Transport", icon: Bus, section: "operations" },
   { href: "settings", label: "Settings", icon: Settings, section: "settings" },
 ];
